@@ -561,6 +561,21 @@
             transition: all 0.1s linear;
         }
 
+        .mini-circle.inhale {
+            background: linear-gradient(135deg, var(--breath-inhale), #60a5fa);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+        }
+
+        .mini-circle.hold {
+            background: linear-gradient(135deg, var(--breath-hold), #a78bfa);
+            box-shadow: 0 0 30px rgba(139, 92, 246, 0.5);
+        }
+
+        .mini-circle.exhale {
+            background: linear-gradient(135deg, var(--breath-exhale), #22d3ee);
+            box-shadow: 0 0 30px rgba(6, 182, 212, 0.5);
+        }
+
         /* Sound Toggle */
         .sound-toggle {
             display: flex;
@@ -782,18 +797,18 @@
                 <h2 style="margin-bottom: 20px;">Choose Your Breathing Pattern</h2>
                 
                 <div class="breathing-pattern-selector">
-                    <button class="pattern-btn active" onclick="setBreathPattern('478')">4-7-8 Relaxing</button>
-                    <button class="pattern-btn" onclick="setBreathPattern('box')">Box Breathing</button>
-                    <button class="pattern-btn" onclick="setBreathPattern('energize')">Energizing</button>
-                    <button class="pattern-btn" onclick="setBreathPattern('calm')">Deep Calm</button>
-                    <button class="pattern-btn" onclick="setBreathPattern('focus')">Focus</button>
+                    <button class="pattern-btn active" onclick="setBreathPattern('478', this)">4-7-8 Relaxing</button>
+                    <button class="pattern-btn" onclick="setBreathPattern('box', this)">Box Breathing</button>
+                    <button class="pattern-btn" onclick="setBreathPattern('energize', this)">Energizing</button>
+                    <button class="pattern-btn" onclick="setBreathPattern('calm', this)">Deep Calm</button>
+                    <button class="pattern-btn" onclick="setBreathPattern('focus', this)">Focus</button>
                 </div>
 
                 <div class="duration-selector">
-                    <button class="duration-btn" onclick="setDuration(60)">1 min</button>
-                    <button class="duration-btn active" onclick="setDuration(180)">3 min</button>
-                    <button class="duration-btn" onclick="setDuration(300)">5 min</button>
-                    <button class="duration-btn" onclick="setDuration(600)">10 min</button>
+                    <button class="duration-btn" onclick="setDuration(60, this)">1 min</button>
+                    <button class="duration-btn active" onclick="setDuration(180, this)">3 min</button>
+                    <button class="duration-btn" onclick="setDuration(300, this)">5 min</button>
+                    <button class="duration-btn" onclick="setDuration(600, this)">10 min</button>
                 </div>
 
                 <div class="sound-toggle">
@@ -839,14 +854,61 @@
         <section id="combined-section" class="game-section">
             <div class="combined-container">
                 <div class="trivia-container" style="grid-column: span 1;">
-                    <!-- Mini trivia will go here -->
-                    <div id="combined-trivia">
-                        <h3 style="text-align: center; margin-bottom: 20px;">🎯 Quick Trivia Round</h3>
-                        <p style="text-align: center; color: var(--text-secondary);">
-                            Answer trivia questions between breathing cycles!
+                    <!-- Combined mode setup -->
+                    <div id="combined-setup">
+                        <h3 style="text-align: center; margin-bottom: 20px;">🎯 Mindful Trivia Challenge</h3>
+                        <p style="text-align: center; color: var(--text-secondary); margin-bottom: 20px;">
+                            Complete breathing cycles, then answer trivia questions!<br>
+                            Stay calm and focused for bonus points.
                         </p>
+                        <div class="difficulty-selector" style="margin-bottom: 15px;">
+                            <button class="difficulty-btn easy active" onclick="setCombinedDifficulty('easy', this)">Easy</button>
+                            <button class="difficulty-btn medium" onclick="setCombinedDifficulty('medium', this)">Medium</button>
+                            <button class="difficulty-btn hard" onclick="setCombinedDifficulty('hard', this)">Hard</button>
+                        </div>
                         <div class="trivia-controls" style="margin-top: 20px;">
                             <button class="control-btn" onclick="startCombinedMode()">Start Combined Mode</button>
+                        </div>
+                    </div>
+                    <!-- Combined mode active game -->
+                    <div id="combined-game" style="display: none;">
+                        <div class="trivia-header" style="margin-bottom: 15px;">
+                            <div class="score-display">Score: <span id="combined-score">0</span></div>
+                            <div class="question-counter">Round <span id="combined-round">1</span></div>
+                        </div>
+                        <div id="combined-breath-phase-display" style="text-align: center; margin-bottom: 15px;">
+                            <span style="font-size: 1.2rem; color: var(--accent-color);" id="combined-phase-text">Breathing Phase</span>
+                        </div>
+                        <div class="question-box" id="combined-question-box" style="display: none;">
+                            <span class="category-badge" id="combined-category">Category</span>
+                            <h2 id="combined-question" style="font-size: 1.2rem;">Question</h2>
+                        </div>
+                        <div class="answers-grid" id="combined-answers" style="display: none;">
+                            <!-- Answers inserted dynamically -->
+                        </div>
+                        <div class="trivia-controls" style="margin-top: 15px;">
+                            <button class="control-btn secondary" id="combined-stop-btn" onclick="stopCombinedMode()">Stop</button>
+                        </div>
+                    </div>
+                    <!-- Combined results -->
+                    <div id="combined-results" style="display: none;">
+                        <div class="results-screen" style="padding: 20px;">
+                            <h2 style="font-size: 1.8rem;">🎉 Session Complete!</h2>
+                            <div class="final-score" id="combined-final-score" style="font-size: 3rem;">0</div>
+                            <p>points earned</p>
+                            <div class="stats-grid" style="margin: 20px 0;">
+                                <div class="stat-card">
+                                    <h3>Rounds</h3>
+                                    <p id="combined-rounds-completed">0</p>
+                                </div>
+                                <div class="stat-card">
+                                    <h3>Breath Cycles</h3>
+                                    <p id="combined-breath-cycles">0</p>
+                                </div>
+                            </div>
+                            <div class="trivia-controls">
+                                <button class="control-btn" onclick="startCombinedMode()">Play Again</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -855,9 +917,10 @@
                     <div class="mini-circle-container">
                         <div class="breathing-circle-bg" style="width: 150px; height: 150px;"></div>
                         <div class="mini-circle" id="mini-breath-circle"></div>
+                        <div class="breathing-text" id="mini-breath-text" style="font-size: 1rem;">Ready</div>
                     </div>
                     <p id="mini-breath-phase" style="font-size: 1.2rem; margin-bottom: 10px;">Ready</p>
-                    <p id="mini-breath-timer" style="color: var(--text-secondary);">0:00</p>
+                    <p id="mini-breath-timer" style="color: var(--text-secondary);">Cycles: <span id="mini-cycle-count">0</span></p>
                 </div>
             </div>
         </section>
@@ -979,7 +1042,7 @@
             hard: [
                 { question: "What is the atomic number of carbon?", answers: ["4", "6", "8", "12"], correct: 1, category: "Science" },
                 { question: "In what year was the Treaty of Westphalia signed?", answers: ["1618", "1638", "1648", "1658"], correct: 2, category: "History" },
-                { question: "What is the fibonacci sequence's 10th number?", answers: ["34", "55", "89", "144"], correct: 1, category: "Math" },
+                { question: "What is the Fibonacci sequence's 10th number?", answers: ["34", "55", "89", "144"], correct: 1, category: "Math" },
                 { question: "Which element has the symbol 'Sn'?", answers: ["Silver", "Tin", "Sodium", "Sulfur"], correct: 1, category: "Science" },
                 { question: "What is the capital of Mongolia?", answers: ["Ulaanbaatar", "Astana", "Bishkek", "Dushanbe"], correct: 0, category: "Geography" },
                 { question: "Who wrote 'The Canterbury Tales'?", answers: ["Shakespeare", "Chaucer", "Milton", "Dickens"], correct: 1, category: "Literature" },
@@ -1279,25 +1342,29 @@
         }
 
         // ============== BREATHING FUNCTIONS ==============
-        function setBreathPattern(pattern) {
+        function setBreathPattern(pattern, element) {
             state.breathPattern = pattern;
             
             document.querySelectorAll('.pattern-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+            if (element) {
+                element.classList.add('active');
+            }
             
             document.getElementById('pattern-display').textContent = breathPatterns[pattern].name;
             document.getElementById('breath-instructions').textContent = breathPatterns[pattern].description;
         }
 
-        function setDuration(seconds) {
+        function setDuration(seconds, element) {
             state.sessionDuration = seconds;
             
             document.querySelectorAll('.duration-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+            if (element) {
+                element.classList.add('active');
+            }
         }
 
         function toggleSound() {
@@ -1493,14 +1560,214 @@
         }
 
         // ============== COMBINED MODE ==============
+        function setCombinedDifficulty(difficulty, element) {
+            state.difficulty = difficulty;
+            document.querySelectorAll('#combined-setup .difficulty-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (element) {
+                element.classList.add('active');
+            }
+        }
+
         function startCombinedMode() {
+            // Reset combined mode state
             state.combinedActive = true;
-            showNotification('Combined mode starting! Complete breathing cycles then answer trivia.');
+            state.combinedPhase = 'breathing';
+            state.combinedRound = 1;
+            state.combinedScore = 0;
+            state.combinedBreathCycles = 0;
+            state.combinedQuestions = shuffleArray([...triviaQuestions[state.difficulty]]);
+            state.combinedQuestionIndex = 0;
             
-            // This is a simplified combined mode
-            // In full implementation, it would alternate between breathing and trivia
-            setMode('breathing');
-            startBreathing();
+            // Show game view
+            document.getElementById('combined-setup').style.display = 'none';
+            document.getElementById('combined-game').style.display = 'block';
+            document.getElementById('combined-results').style.display = 'none';
+            
+            // Update UI
+            document.getElementById('combined-score').textContent = '0';
+            document.getElementById('combined-round').textContent = '1';
+            document.getElementById('mini-cycle-count').textContent = '0';
+            
+            showNotification('Combined mode starting! Breathe first, then answer.');
+            
+            // Start breathing phase
+            startCombinedBreathing();
+        }
+
+        function startCombinedBreathing() {
+            state.combinedPhase = 'breathing';
+            document.getElementById('combined-phase-text').textContent = '🌬️ Breathing Phase - Complete 2 cycles';
+            document.getElementById('combined-question-box').style.display = 'none';
+            document.getElementById('combined-answers').style.display = 'none';
+            
+            // Start mini breathing animation
+            const pattern = breathPatterns['box']; // Use box breathing for combined mode
+            let phaseIndex = 0;
+            let countdown = pattern.phases[0].duration;
+            let cyclesInRound = 0;
+            
+            updateMiniBreathingUI(pattern.phases[0], countdown, pattern.phases[0].duration);
+            
+            state.combinedBreathInterval = setInterval(() => {
+                if (!state.combinedActive) {
+                    clearInterval(state.combinedBreathInterval);
+                    return;
+                }
+                
+                countdown--;
+                
+                if (countdown <= 0) {
+                    phaseIndex = (phaseIndex + 1) % pattern.phases.length;
+                    
+                    if (phaseIndex === 0) {
+                        cyclesInRound++;
+                        state.combinedBreathCycles++;
+                        document.getElementById('mini-cycle-count').textContent = state.combinedBreathCycles;
+                        
+                        // After 2 cycles, switch to trivia
+                        if (cyclesInRound >= 2) {
+                            clearInterval(state.combinedBreathInterval);
+                            startCombinedTrivia();
+                            return;
+                        }
+                    }
+                    
+                    countdown = pattern.phases[phaseIndex].duration;
+                }
+                
+                updateMiniBreathingUI(pattern.phases[phaseIndex], countdown, pattern.phases[phaseIndex].duration);
+                
+            }, 1000);
+        }
+
+        function updateMiniBreathingUI(phase, countdown, totalDuration) {
+            const circle = document.getElementById('mini-breath-circle');
+            const text = document.getElementById('mini-breath-text');
+            const phaseEl = document.getElementById('mini-breath-phase');
+            
+            // Update text
+            text.textContent = countdown;
+            phaseEl.textContent = phase.name;
+            
+            // Update circle class
+            circle.className = 'mini-circle';
+            if (phase.name === 'Inhale') {
+                circle.classList.add('inhale');
+            } else if (phase.name === 'Hold') {
+                circle.classList.add('hold');
+            } else if (phase.name === 'Exhale') {
+                circle.classList.add('exhale');
+            }
+            
+            // Calculate circle size
+            const progress = 1 - (countdown / totalDuration);
+            let size;
+            
+            if (phase.name === 'Inhale') {
+                size = 40 + (progress * 70); // 40px to 110px
+            } else if (phase.name === 'Exhale') {
+                size = 110 - (progress * 70); // 110px to 40px
+            } else {
+                size = phase.name === 'Hold' && progress === 0 ? 110 : 40;
+            }
+            
+            circle.style.width = size + 'px';
+            circle.style.height = size + 'px';
+        }
+
+        function startCombinedTrivia() {
+            state.combinedPhase = 'trivia';
+            document.getElementById('combined-phase-text').textContent = '🎯 Trivia Phase - Answer the question!';
+            
+            if (state.combinedQuestionIndex >= state.combinedQuestions.length) {
+                state.combinedQuestionIndex = 0;
+                state.combinedQuestions = shuffleArray([...triviaQuestions[state.difficulty]]);
+            }
+            
+            const q = state.combinedQuestions[state.combinedQuestionIndex];
+            
+            // Show question
+            document.getElementById('combined-question-box').style.display = 'block';
+            document.getElementById('combined-answers').style.display = 'grid';
+            document.getElementById('combined-category').textContent = q.category;
+            document.getElementById('combined-question').textContent = q.question;
+            
+            // Create shuffled answers
+            const answers = q.answers.map((answer, index) => ({ text: answer, originalIndex: index }));
+            const shuffledAnswers = shuffleArray(answers);
+            const correctNewIndex = shuffledAnswers.findIndex(a => a.originalIndex === q.correct);
+            state.combinedQuestions[state.combinedQuestionIndex].shuffledCorrect = correctNewIndex;
+            
+            // Render answers
+            const answersContainer = document.getElementById('combined-answers');
+            answersContainer.innerHTML = '';
+            shuffledAnswers.forEach((answer, index) => {
+                const btn = document.createElement('button');
+                btn.className = 'answer-btn';
+                btn.textContent = answer.text;
+                btn.onclick = () => selectCombinedAnswer(index);
+                answersContainer.appendChild(btn);
+            });
+        }
+
+        function selectCombinedAnswer(index) {
+            const q = state.combinedQuestions[state.combinedQuestionIndex];
+            const isCorrect = index === q.shuffledCorrect;
+            
+            // Disable all buttons
+            const buttons = document.querySelectorAll('#combined-answers .answer-btn');
+            buttons.forEach((btn, i) => {
+                btn.disabled = true;
+                if (i === q.shuffledCorrect) {
+                    btn.classList.add('correct');
+                } else if (i === index && !isCorrect) {
+                    btn.classList.add('incorrect');
+                }
+            });
+            
+            // Update score
+            if (isCorrect) {
+                const points = state.difficulty === 'easy' ? 15 : state.difficulty === 'medium' ? 25 : 40;
+                state.combinedScore += points;
+                document.getElementById('combined-score').textContent = state.combinedScore;
+                showNotification('Correct! +' + points + ' points (calm bonus!)');
+            } else {
+                showNotification('Incorrect!', true);
+            }
+            
+            state.combinedQuestionIndex++;
+            state.combinedRound++;
+            
+            // Check if we should continue or end
+            if (state.combinedRound > 5) {
+                setTimeout(() => endCombinedMode(), 1500);
+            } else {
+                document.getElementById('combined-round').textContent = state.combinedRound;
+                setTimeout(() => startCombinedBreathing(), 1500);
+            }
+        }
+
+        function stopCombinedMode() {
+            state.combinedActive = false;
+            clearInterval(state.combinedBreathInterval);
+            endCombinedMode();
+        }
+
+        function endCombinedMode() {
+            state.combinedActive = false;
+            clearInterval(state.combinedBreathInterval);
+            
+            // Show results
+            document.getElementById('combined-game').style.display = 'none';
+            document.getElementById('combined-results').style.display = 'block';
+            
+            document.getElementById('combined-final-score').textContent = state.combinedScore;
+            document.getElementById('combined-rounds-completed').textContent = state.combinedRound - 1;
+            document.getElementById('combined-breath-cycles').textContent = state.combinedBreathCycles;
+            
+            showNotification('🎉 Combined session complete!');
         }
 
         // ============== INITIALIZATION ==============
