@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sorted Tonal Master List</title>
+    <style>
+        :root {
+            --font-stack: 'Courier New', Courier, monospace;
+            --bg-body: #0a0a0a;
+            --row-bg: #111;
+            --border-col: #333;
+        }
+
+        body {
+            font-family: var(--font-stack);
+            background-color: var(--bg-body);
+            color: #ddd;
+            margin: 0;
+            padding: 40px;
+            padding-right: 320px;
+        }
+
+        h1 { text-align: center; letter-spacing: 2px; font-size: 18px; margin-bottom: 10px; text-transform: uppercase; }
+        p.sub { text-align: center; color: #666; font-size: 11px; margin-bottom: 40px; }
+
+        /* --- SIDEBAR --- */
+        .sidebar {
+            position: fixed; top: 0; right: 0; width: 300px; height: 100vh;
+            background: #111; border-left: 1px solid #333; padding: 20px;
+            box-sizing: border-box; display: flex; flex-direction: column; z-index: 2000;
+        }
+        .sidebar-title { font-weight: bold; margin-bottom: 10px; color: #fff; font-size: 12px; }
+        .export-area {
+            flex: 1; background: #000; border: 1px solid #333; color: #4caf50;
+            font-family: monospace; font-size: 11px; padding: 10px; resize: none; margin-bottom: 10px; outline: none;
+        }
+        .sidebar-btn {
+            background: #222; color: #fff; border: 1px solid #444; padding: 8px;
+            cursor: pointer; margin-bottom: 5px; text-transform: uppercase; font-weight: bold; font-size: 11px;
+        }
+        .sidebar-btn:hover { background: #333; }
+
+        /* --- LIST STYLES --- */
+        .list-container { display: flex; flex-direction: column; gap: 8px; max-width: 900px; margin: 0 auto; }
+
+        .palette-row {
+            display: flex; align-items: center; background: var(--row-bg);
+            border: 1px solid var(--border-col); padding: 0 15px; height: 50px;
+            transition: all 0.2s; cursor: pointer; border-radius: 4px;
+        }
+        .palette-row:hover { background: #1a1a1a; border-color: #555; }
+
+        .palette-row.selected { border-color: #2e7d32; background: #0f1f0f; }
+        .checkbox {
+            width: 16px; height: 16px; border: 1px solid #555; margin-right: 15px;
+            display: flex; align-items: center; justify-content: center; border-radius: 2px;
+        }
+        .palette-row.selected .checkbox { background: #2e7d32; border-color: #2e7d32; color: #fff; }
+        .checkbox::after { content: '✓'; font-size: 12px; display: none; }
+        .palette-row.selected .checkbox::after { display: block; }
+
+        .name-input {
+            background: transparent; border: none; color: #ccc;
+            font-family: var(--font-stack); font-weight: bold; font-size: 12px;
+            width: 180px; margin-right: 20px;
+        }
+        .name-input:focus { outline: none; color: #fff; }
+
+        .swatch-container { display: flex; gap: 4px; flex: 1; }
+        .swatch {
+            width: 30px; height: 20px; border-radius: 2px; position: relative;
+            border: 1px solid rgba(255,255,255,0.1); cursor: copy;
+        }
+        .swatch:hover::after {
+            content: attr(data-hex);
+            position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%);
+            background: #000; color: #fff; padding: 4px; font-size: 9px; border-radius: 3px; pointer-events: none;
+            white-space: nowrap; z-index: 100;
+        }
+
+        .mini-vis { width: 40px; height: 30px; position: relative; margin-left: 20px; }
+        .mv-c { position: absolute; width: 20px; height: 20px; border-radius: 50%; opacity: 0.6; mix-blend-mode: screen; }
+        .mv-1 { top: 0; left: 10px; } .mv-2 { top: 10px; left: 20px; } .mv-3 { top: 10px; left: 0; } .mv-4 { top: 5px; left: 10px; }
+
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="sidebar-title">SELECTED PALETTES</div>
+        <textarea id="exportArea" class="export-area" readonly></textarea>
+        <button class="sidebar-btn" onclick="copyDict()">Copy JSON</button>
+        <button class="sidebar-btn" onclick="downloadDict()">Download JSON</button>
+    </div>
+
+    <h1>Rainbow Tonal Spectrum</h1>
+    <p class="sub">Sorted: Least White &rarr; Whitest</p>
+
+    <div id="listContainer" class="list-container"></div>
+
+    <script>
+        // --- 1. DEFINE PALETTES ---
+        // (Defined unsorted; the script below will sort them automatically)
+        const RAW_DATA = [
+            // --- PINKS & REDS ---
+            { name: "VLightHotPink", colors: ["#ffffff", "#FFCBE5", "#FFDDF0", "#FFF0F5"] },
+            { name: "PurpleyPinky", colors: ["#F4CCE9", "#EBD3F8", "#E3DFFD", "#F5E9FF"] },
+            { name: "Gally", colors: ["#F4CCE9", "#EBD3F8", "#E3DFFD", "#F5E9FF"] },
+
+            // --- PURPLES (From Split) ---
+            { name: "LushBluey_Purple", colors: ["#BDB2FF", "#D6D0FF", "#EBE4FF", "#ffffff"] }, // Added transitions
+            { name: "GreyPurple", colors: ["#E3DFFD", "#F5E9FF", "#F5EFFF", "#F4EEFF"] },
+            { name: "LightPurple", colors: ["#fef9ff", "#E3DFFD", "#F5E9FF", "#F5EFFF"] },
+
+            // --- ORANGES ---
+            { name: "NiceOrangey", colors: ["#FFC8A2", "#FFD6A5", "#ffdbbb", "#F9A49E"] },
+            { name: "YellowyOrange", colors: ["#FFF8E6", "#FFF2C6", "#ffdbbb", "#F9A49E"] },
+            { name: "RedyOrangey", colors: ["#FFF8E6", "#FFF2C6", "#F9F5F6", "#fef9ff"] },
+
+            // --- YELLOWS ---
+            { name: "Yellowy", colors: ["#FFEE91", "#FFFFD2", "#FFF2C6", "#FCFFBF"] },
+            { name: "BrightYellow", colors: ["#FFEE91", "#FFFFD2", "#FFF8E6", "#FCFFBF"] },
+            { name: "YellowWhite", colors: ["#FFF8E6", "#FFF2C6", "#F9F5F6", "#fef9ff"] },
+
+            // --- GREENS ---
+            { name: "VLightNeonGreen", colors: ["#ffffff", "#E6FFCC", "#D1FF99", "#F0FFF0"] },
+            { name: "Greeny", colors: ["#CDF0EA", "#EDFFF0", "#EBFFD8", "#FCFFBF", "#fdfffc"] },
+            { name: "GreenyYellow", colors: ["#CDF0EA", "#EDFFF0", "#EBFFD8", "#FCFFBF"] },
+            { name: "PaleLime", colors: ["#EEF1FF", "#ebeff1", "#EDFFF0", "#EBFFD8"] },
+            { name: "GreenMix", colors: ["#ebeff1", "#EDFFF0", "#EBFFD8", "#fdfffc", "#D1FF99"] }, // Added Neon Green
+
+            // --- CYANS / TEALS ---
+            { name: "GreatCyany", colors: ["#9BF6FF", "#CDF0EA", "#A0E7E5", "#ecf7fd"] },
+            { name: "Tealy", colors: ["#D2DAFF", "#CDF0EA", "#EDFFF0", "#EBFFD8", "#F0FFFA"] }, // Added Transition
+            { name: "Mint", colors: ["#E0F4FF", "#ecf7fd", "#CDF0EA", "#fdfffc"] },
+
+            // --- BLUES (From Split) ---
+            { name: "LushBluey_Blue", colors: ["#A0C4FF", "#D2DAFF", "#E6F0FF", "#ffffff"] }, // Added transitions
+            { name: "Bluey", colors: ["#D2DAFF", "#E0F4FF", "#EEF1FF", "#ecf7fd", "#ebeff1"] },
+            { name: "BlueyLight", colors: ["#D2DAFF", "#EEF1FF", "#ecf7fd", "#ebeff1"] },
+            { name: "Snowy", colors: ["#D2DAFF", "#E0F4FF", "#EEF1FF", "#ecf7fd"] },
+            { name: "Ice", colors: ["#E0F4FF", "#EEF1FF", "#ecf7fd", "#ebeff1"] },
+            { name: "BluesGreen", colors: ["#E0F4FF", "#ebeff1", "#EDFFF0", "#EBFFD8"] },
+        ];
+
+        // --- 2. SORTING HELPER (LUMINANCE) ---
+        function getLuminance(hex) {
+            const rgb = parseInt(hex.substring(1), 16);
+            const r = (rgb >> 16) & 0xff;
+            const g = (rgb >>  8) & 0xff;
+            const b = (rgb >>  0) & 0xff;
+            // Standard Luminance Formula
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        }
+
+        function sortColors(colors) {
+            return colors.sort((a, b) => getLuminance(a) - getLuminance(b));
+        }
+
+        // --- 3. RENDER ---
+        const listContainer = document.getElementById('listContainer');
+
+        RAW_DATA.forEach((p, idx) => {
+            // Sort Colors (Darkest -> Lightest)
+            const sortedColors = sortColors([...p.colors]);
+
+            const row = document.createElement('div');
+            row.className = 'palette-row';
+            row.dataset.colors = JSON.stringify(sortedColors);
+
+            // Checkbox
+            const chk = document.createElement('div');
+            chk.className = 'checkbox';
+            row.appendChild(chk);
+
+            // Input
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = p.name;
+            input.className = 'name-input';
+            input.onclick = (e) => e.stopPropagation();
+            input.oninput = () => updateExport();
+            row.appendChild(input);
+
+            // Swatches
+            const swatches = document.createElement('div');
+            swatches.className = 'swatch-container';
+            sortedColors.forEach(c => {
+                const s = document.createElement('div');
+                s.className = 'swatch';
+                s.style.backgroundColor = c;
+                s.dataset.hex = c;
+                s.onclick = (e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(c);
+                }
+                swatches.appendChild(s);
+            });
+            row.appendChild(swatches);
+
+            // Mini Visual
+            const vis = document.createElement('div');
+            vis.className = 'mini-vis';
+            const c4 = sortedColors.slice(0, 4);
+            while(c4.length < 4) c4.push(c4[0]);
+
+            c4.forEach((c, i) => {
+                const b = document.createElement('div');
+                b.className = `mv-c mv-${i+1}`;
+                b.style.backgroundColor = c;
+                vis.appendChild(b);
+            });
+            row.appendChild(vis);
+
+            // Click Handler
+            row.onclick = () => {
+                row.classList.toggle('selected');
+                updateExport();
+            };
+
+            listContainer.appendChild(row);
+        });
+
+        // --- EXPORT LOGIC ---
+        function updateExport() {
+            const output = {};
+            const selected = document.querySelectorAll('.palette-row.selected');
+            selected.forEach(row => {
+                const name = row.querySelector('.name-input').value;
+                const colors = JSON.parse(row.dataset.colors);
+                output[name] = colors;
+            });
+            document.getElementById('exportArea').value = JSON.stringify(output, null, 4);
+        }
+
+        function copyDict() { document.getElementById('exportArea').select(); document.execCommand('copy'); }
+        function downloadDict() {
+            const blob = new Blob([document.getElementById('exportArea').value], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = 'sorted_palettes.json'; a.click();
+        }
+
+    </script>
+</body>
+</html>

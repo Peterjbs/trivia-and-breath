@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focus Flow Player</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+
+        body { font-family: 'Inter', sans-serif; background: #000; overflow: hidden; }
+
+        /* Animations */
+        @keyframes floatDown {
+            0% { transform: translateY(-20vh); opacity: 0; }
+            10% { opacity: 0.8; }
+            90% { opacity: 0.8; }
+            100% { transform: translateY(120vh); opacity: 0; }
+        }
+        @keyframes floatUp {
+            0% { transform: translateY(120vh); opacity: 0; }
+            10% { opacity: 0.8; }
+            90% { opacity: 0.8; }
+            100% { transform: translateY(-20vh); opacity: 0; }
+        }
+
+        .bubble { position: absolute; background: rgba(255, 255, 255, 0.8); border-radius: 50%; pointer-events: none; }
+        .bubble-down { animation: floatDown linear infinite; }
+        .bubble-up { animation: floatUp linear infinite; }
+
+        /* Cloud Particle Animations */
+        @keyframes cloudMove {
+            0% { transform: translate(var(--sx), var(--sy)) scale(0); opacity: 0; }
+            20% { opacity: var(--max-op); }
+            80% { opacity: var(--max-op); }
+            100% { transform: translate(var(--ex), var(--ey)) scale(var(--scale)); opacity: 0; }
+        }
+
+        .cloud-particle {
+            position: absolute;
+            background: radial-gradient(circle, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 70%);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: cloudMove linear infinite;
+        }
+
+        .fire-overlay {
+            background: radial-gradient(circle at center, transparent 0%, rgba(255, 69, 0, 0.4) 40%, rgba(139, 0, 0, 0.8) 100%);
+            box-shadow: inset 0 0 100px #ff4500;
+            animation: pulseFire 2s infinite alternate;
+        }
+
+        .subtle-overlay {
+            background: radial-gradient(circle at center, rgba(255, 255, 255, 0.1) 0%, rgba(200, 200, 255, 0.1) 50%, rgba(255, 100, 0, 0.15) 100%);
+            animation: pulseSubtle 4s infinite alternate;
+        }
+
+        @keyframes pulseFire { 0% { opacity: 0.8; } 100% { opacity: 1; } }
+        @keyframes pulseSubtle { 0% { opacity: 0.5; } 100% { opacity: 0.8; } }
+
+        /* Feedback Animations */
+        @keyframes flashGreen {
+            0% { transform: scale(1.05); filter: brightness(1.5); }
+            100% { transform: scale(1); filter: brightness(1); }
+        }
+
+        @keyframes floatScore {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-50px) scale(1.5); }
+        }
+
+        .correct-flash { animation: flashGreen 0.8s ease-out forwards !important; }
+
+        .score-popup {
+            position: absolute;
+            color: #4ade80;
+            font-weight: 900;
+            font-size: 3rem;
+            text-shadow: 0 0 10px rgba(0,0,0,1);
+            pointer-events: none;
+            z-index: 100;
+            animation: floatScore 1.5s ease-out forwards;
+        }
+
+        .score-popup-neg {
+            color: #ef4444;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 0px; }
+
+        /* Utility */
+        .text-shadow { text-shadow: 2px 2px 4px rgba(0,0,0,0.9); }
+        .text-glow { text-shadow: 0 0 10px currentColor; }
+        .glass-panel { backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // --- Colors (Updated for visibility: text-gray-900 on pastel) ---
+        const PASTEL_COLORS = [
+            'bg-rose-200/50 text-gray-900 border-rose-300/50',
+            'bg-pink-200/50 text-gray-900 border-pink-300/50',
+            'bg-fuchsia-200/50 text-gray-900 border-fuchsia-300/50',
+            'bg-purple-200/50 text-gray-900 border-purple-300/50',
+            'bg-violet-200/50 text-gray-900 border-violet-300/50',
+            'bg-indigo-200/50 text-gray-900 border-indigo-300/50',
+            'bg-blue-200/50 text-gray-900 border-blue-300/50',
+            'bg-sky-200/50 text-gray-900 border-sky-300/50',
+            'bg-cyan-200/50 text-gray-900 border-cyan-300/50',
+            'bg-teal-200/50 text-gray-900 border-teal-300/50',
+            'bg-emerald-200/50 text-gray-900 border-emerald-300/50',
+            'bg-green-200/50 text-gray-900 border-green-300/50',
+            'bg-lime-200/50 text-gray-900 border-lime-300/50',
+            'bg-yellow-200/50 text-gray-900 border-yellow-300/50',
+            'bg-amber-200/50 text-gray-900 border-amber-300/50',
+            'bg-orange-200/50 text-gray-900 border-orange-300/50'
+        ];
+
+        // --- Configuration Lists ---
+        const THEMES = {
+            level1: [ "Airplanes", "Animals", "Apps", "Athletes", "Beaches", "Birds", "Bodies", "Bricks", "Bridges", "Capitals", "Channels", "Cities", "Cocktails", "Colors", "Countries", "Curves", "Caves", "Deserts", "Desserts", "Documentaries", "Doors", "Dreams", "Drinks", "Echoes", "Elements", "Faces", "Fabrics", "Fields", "Films", "Flames", "Flowers", "Forests", "Forms", "Fountains", "Fruits", "Gardens", "Grooves", "Houses", "Instruments", "Islands", "Jewelry", "Keys", "Lakes", "Languages", "Leaves", "Lights", "Lines", "Matches", "Metals", "Minerals", "Mirrors", "Moons", "Mountains", "Movies", "Music", "Notes", "Oceans", "Paintings", "Paths", "Peaks", "Piers", "Pets", "Planets", "Plays", "Poems", "Planes", "Pools", "Posts", "Recipes", "Reflections", "Rivers", "Roads", "Rocks", "Rooms", "Seasons", "Shows", "Shops", "Signs", "Skies", "Songs", "Sparks", "Sports", "Stars", "Stories", "Streams", "Suns", "Trees", "Towers", "Waves", "Winds" ],
+            level2: [ "Adventures", "Allies", "Angles", "Auras", "Ballrooms", "Beats", "Blooms", "Bonds", "Branches", "Breezes", "Bridges", "Camps", "Canals", "Chains", "Channels", "Chords", "Circles", "Clues", "Codes", "Colors", "Comics", "Cosmos", "Crafts", "Cultures", "Customs", "Cycles", "Diaries", "Doors", "Echoes", "Edges", "Energies", "Exhibits", "Faces", "Feeds", "Festivals", "Flags", "Flips", "Forests", "Galleries", "Glimmer", "Grooves", "Habits", "Harbors", "Horizons", "Illusions", "Journeys", "Knots", "Layers", "Leaders", "Legends", "Links", "Locales", "Looks", "Markets", "Masks", "Masters", "Messages", "Moods", "Motions", "Moves", "Notes", "Patterns", "Paths", "Petals", "Pings", "Players", "Ports", "Posts", "Pubs", "Pups", "Pavilions", "Quests", "Rainbows", "Records", "Reflections", "Rituals", "Routes", "Scenes", "Shades", "Shapes", "Shores", "Signals", "Stories", "Streams", "Styles", "Symbols", "Tales", "Textures", "Tides", "Towns", "Traditions", "Trends", "Twists", "Valleys", "Vibes", "Wolves", "Zones" ],
+            level3: [ "Archives", "Aesthetics", "Anthologies", "Arcana", "Armories", "Armies", "Artifacts", "Ateliers", "Battalions", "Biomes", "Blossoms", "Boroughs", "Cabarets", "Castles", "Catalogs", "Cathedrals", "Ceremonies", "Chambers", "Circuits", "Clusters", "Conflicts", "Councils", "Currents", "Customs", "Desires", "Dynasties", "Echoes", "Elements", "Embers", "Empires", "Emporiums", "Estates", "Factions", "Fantasies", "Festivals", "Forges", "Frontiers", "Guilds", "Guildhalls", "Harbors", "Heritage", "Histories", "Icons", "Libraries", "Lore", "Manor", "Manuscripts", "Markets", "Marshes", "Masters", "Menageries", "Monasteries", "Monoliths", "Monuments", "Myths", "Nebulas", "Networks", "Observatories", "Orders", "Orbits", "Pantheons", "Parishes", "Periods", "Phases", "Ports", "Provinces", "Realms", "Refractions", "Regions", "Resonance", "Riddles", "Rituals", "Roots", "Sagas", "Sanctuaries", "Sectors", "Shadows", "Solstice", "Sparks", "Spirals", "Storms", "Subcultures", "Symposiums", "Symbols", "Temples", "Tones", "Traditions", "Tribunals", "Twilights", "Universes", "Vibration", "Vortexes", "Vaults", "Whispers", "Zeniths" ]
+        };
+
+        const OPENTDB_CATS = [9, 10, 11, 12, 17, 18, 19, 21, 22, 23, 27];
+
+        // --- Validators ---
+        const validateQuestionLength = (q) => {
+            if (q.question.length > 100) return false;
+            const checkOpt = (opt) => opt.length <= 20;
+            if (q.correctAnswer && !checkOpt(q.correctAnswer)) return false;
+            const opts = q.options || q.incorrect_answers || [];
+            if (!opts.every(checkOpt)) return false;
+            return true;
+        };
+
+        // --- OpenAI Schema & Validation ---
+        const TRIVIA_BATCH_SCHEMA = {
+            name: "trivia_batch",
+            schema: {
+                type: "object",
+                properties: {
+                    level1: { type: "array", minItems: 2, maxItems: 2, items: { type: "object", properties: { level: { type: "integer", const: 1 }, category: { type: "string" }, questions: { type: "array", minItems: 4, maxItems: 4, items: { type: "object", properties: { question: { type: "string", maxLength: 100 }, difficulty: { type: "string", const: "easy" }, options: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", maxLength: 20 } }, correctAnswer: { type: "string", maxLength: 20 } }, required: ["question", "difficulty", "options", "correctAnswer"], additionalProperties: false } } }, required: ["level", "category", "questions"], additionalProperties: false } },
+                    level2: { type: "array", minItems: 2, maxItems: 2, items: { type: "object", properties: { level: { type: "integer", const: 2 }, category: { type: "string" }, questions: { type: "array", minItems: 4, maxItems: 4, items: { type: "object", properties: { question: { type: "string", maxLength: 100 }, difficulty: { type: "string", const: "medium" }, options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string", maxLength: 20 } }, correctAnswer: { type: "string", maxLength: 20 } }, required: ["question", "difficulty", "options", "correctAnswer"], additionalProperties: false } } }, required: ["level", "category", "questions"], additionalProperties: false } },
+                    level3: { type: "array", minItems: 2, maxItems: 2, items: { type: "object", properties: { level: { type: "integer", const: 3 }, category: { type: "string" }, questions: { type: "array", minItems: 4, maxItems: 4, items: { type: "object", properties: { question: { type: "string", maxLength: 100 }, difficulty: { type: "string", enum: ["medium", "hard"] }, options: { type: "array", minItems: 5, maxItems: 6, items: { type: "string", maxLength: 20 } }, correctAnswer: { type: "string", maxLength: 20 } }, required: ["question", "difficulty", "options", "correctAnswer"], additionalProperties: false } } }, required: ["level", "category", "questions"], additionalProperties: false } }
+                },
+                required: ["level1", "level2", "level3"],
+                additionalProperties: false
+            },
+            strict: true
+        };
+
+        const QC_SCHEMA = {
+            name: "quality_check",
+            schema: {
+                type: "object",
+                properties: {
+                    categoryAnalysis: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                categoryIndex: { type: "integer", description: "Index of the category in the input list (0-4)" },
+                                weakQuestionIndices: {
+                                    type: "array",
+                                    items: { type: "integer" },
+                                    description: "Indices of questions (0-3) that are vague, incorrect, bad formatting, or ambiguous."
+                                }
+                            },
+                            required: ["categoryIndex", "weakQuestionIndices"],
+                            additionalProperties: false
+                        }
+                    }
+                },
+                required: ["categoryAnalysis"],
+                additionalProperties: false
+            },
+            strict: true
+        };
+
+        function validateTriviaBatch(batch) {
+            function checkLevel(expectedLevel, arr) {
+                if (!Array.isArray(arr)) return;
+                arr.forEach(cat => {
+                    if (!Array.isArray(cat.questions) || cat.questions.length !== 4) throw new Error(`Level ${expectedLevel} category must have 4 questions`);
+                });
+            }
+            checkLevel(1, batch.level1);
+            checkLevel(2, batch.level2);
+            checkLevel(3, batch.level3);
+        }
+
+        // --- Helper Components ---
+
+        const CloudCanvas = ({ direction, count = 50 }) => {
+            const [particles, setParticles] = useState([]);
+            useEffect(() => {
+                const newParticles = Array.from({ length: count }).map((_, i) => {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 80 + Math.random() * 50;
+                    const offX = Math.cos(angle) * dist;
+                    const offY = Math.sin(angle) * dist;
+                    let startX, startY, endX, endY;
+
+                    if (direction === 'inhale') {
+                        startX = `${offX}vw`; startY = `${offY}vh`;
+                        endX = `${(Math.random() - 0.5) * 10}vw`; endY = `${(Math.random() - 0.5) * 5}vh`;
+                    } else {
+                        startX = `${(Math.random() - 0.5) * 5}vw`; startY = `${(Math.random() - 0.5) * 5}vh`;
+                        endX = `${offX}vw`; endY = `${offY}vh`;
+                    }
+
+                    return {
+                        id: i, sx: startX, sy: startY, ex: endX, ey: endY,
+                        size: Math.random() * 60 + 20 + 'px',
+                        maxOp: Math.random() * 0.3 + 0.2,
+                        dur: Math.random() * 2 + 2 + 's',
+                        scale: Math.random() * 0.5 + 0.5
+                    };
+                });
+                setParticles(newParticles);
+            }, [direction, count]);
+
+            return (
+                <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
+                    {particles.map(p => (
+                        <div key={p.id}
+                             className="cloud-particle"
+                             style={{
+                                 left: '50%', top: '10%',
+                                 width: p.size, height: p.size,
+                                 '--sx': p.sx, '--sy': p.sy,
+                                 '--ex': p.ex, '--ey': p.ey,
+                                 '--max-op': p.maxOp,
+                                 '--scale': p.scale,
+                                 animationDuration: p.dur
+                             }}
+                        />
+                    ))}
+                </div>
+            );
+        };
+
+        const Button = ({ onClick, children, className = "", disabled = false, style={} }) => (
+            <button onClick={onClick} disabled={disabled} style={style} className={`px-4 py-2 rounded font-bold transition-all active:scale-95 shadow-lg ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:brightness-110 hover:scale-105'} ${className}`}>{children}</button>
+        );
+
+        // --- Main Application ---
+        const App = () => {
+            const [phase, setPhase] = useState('SETUP'); // SETUP, TRIVIA, MULTI_SELECT, LIGHT, PRE_BREATH, BREATHING, GAME_OVER
+            const [playlist, setPlaylist] = useState([]);
+            const [currentVideoIdx, setCurrentVideoIdx] = useState(0);
+            const [isMuted, setIsMuted] = useState(false);
+
+            const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+            const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('openai_api_key') || '');
+
+            const [score, setScore] = useState(0);
+            const [streak, setStreak] = useState(0);
+            const [level, setLevel] = useState(1);
+            const [roundCount, setRoundCount] = useState(1);
+            const [currentCategoryName, setCurrentCategoryName] = useState("Focus");
+            const [currentColor, setCurrentColor] = useState(PASTEL_COLORS[0]);
+            const [scorePopups, setScorePopups] = useState([]);
+
+            const [questions, setQuestions] = useState([]);
+            const [currentQIndex, setCurrentQIndex] = useState(0);
+
+            // Pools
+            const [categoryPools, setCategoryPools] = useState({ 1: [], 2: [], 3: [] });
+            const [multiSelectPool, setMultiSelectPool] = useState([]);
+            const [usedThemes, setUsedThemes] = useState(new Set());
+            const [isGenerating, setIsGenerating] = useState(false);
+            const [availableSelection, setAvailableSelection] = useState([]);
+            const [customTopic, setCustomTopic] = useState("");
+            const [isGeneratingCustom, setIsGeneratingCustom] = useState(false);
+            const [zenInsight, setZenInsight] = useState("");
+
+            // Answer States
+            const [lockout, setLockout] = useState(false);
+            const [wrongAnswers, setWrongAnswers] = useState(new Set());
+            const [tempWrongId, setTempWrongId] = useState(null);
+            const [correctAnswerId, setCorrectAnswerId] = useState(null);
+
+            // Multi-Select State
+            const [currentMultiSelect, setCurrentMultiSelect] = useState(null);
+            const [foundMultiIndices, setFoundMultiIndices] = useState(new Set());
+
+            const [gridPositions, setGridPositions] = useState([]);
+            const [categoryGridPositions, setCategoryGridPositions] = useState([]);
+
+            const [triviaTimeLeft, setTriviaTimeLeft] = useState(60);
+            const [breathingStartTime, setBreathingStartTime] = useState(null);
+            const [breathCyclePhase, setBreathCyclePhase] = useState('IDLE');
+            const [breathCount, setBreathCount] = useState(null);
+
+            const videoRef = useRef(null);
+            const triviaTimerRef = useRef(null);
+            const breathTimerRef = useRef(null);
+            const pointsTimerRef = useRef(null);
+            const lockoutTimerRef = useRef(null);
+            const decayTimerRef = useRef(null);
+
+            const handleGeminiChange = (e) => { const key = e.target.value; setGeminiKey(key); localStorage.setItem('gemini_api_key', key); };
+            const handleOpenAIChange = (e) => { const key = e.target.value; setOpenaiKey(key); localStorage.setItem('openai_api_key', key); };
+
+            // --- Logic Helpers ---
+            const getPoolLevel = (lvl) => Math.min(lvl, 3);
+
+            const getUnusedThemes = (lvl, count) => {
+                let themeList = THEMES[`level${getPoolLevel(lvl)}`] || THEMES.level3;
+                let shuffled = [...themeList].sort(() => Math.random() - 0.5);
+                let candidates = [];
+                for(let t of shuffled) {
+                    if(!usedThemes.has(t)) candidates.push(t);
+                    if(candidates.length >= count) break;
+                }
+                return candidates;
+            };
+
+            const markThemesUsed = (themes) => setUsedThemes(prev => { const next = new Set(prev); themes.forEach(c => next.add(c)); return next; });
+            const getRandomPastel = () => PASTEL_COLORS[Math.floor(Math.random() * PASTEL_COLORS.length)];
+
+            // --- API Calls ---
+            const callOpenAI = async (l1Cats, l2Cats, l3Cats) => {
+                 const systemPrompt = `You are a trivia question generator. Follow JSON schema. Level 1: easy, 3 options. Level 2: medium, 4 options. Level 3: medium/hard, 5-6 options. Max Q 100 chars. Max A 20 chars.`;
+                 const userPrompt = `Generate a batch (4 questions per category). L1: ${l1Cats.join(', ')}. L2: ${l2Cats.join(', ')}. L3: ${l3Cats.join(', ')}`;
+                 try {
+                     const res = await fetch("https://api.openai.com/v1/chat/completions", {
+                         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiKey}` },
+                         body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }], response_format: { type: "json_schema", json_schema: TRIVIA_BATCH_SCHEMA } })
+                     });
+                     if (!res.ok) return null;
+                     const data = await res.json();
+                     const batch = JSON.parse(data.choices[0].message.content);
+                     validateTriviaBatch(batch);
+                     ['level1', 'level2', 'level3'].forEach(k => {
+                         if(batch[k]) batch[k].forEach(c => c.color = getRandomPastel());
+                     });
+                     return batch;
+                 } catch (e) { console.error("OpenAI Error:", e); return null; }
+            };
+
+            const callOpenAI_QC = async (categories) => {
+                if(!openaiKey || categories.length === 0) return [];
+                try {
+                    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+                        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiKey}` },
+                        body: JSON.stringify({
+                            model: "gpt-4o-mini",
+                            messages: [
+                                { role: "system", content: "You are a QC agent." },
+                                { role: "user", content: `Analyze these 5 categories. Return indices of weak questions.\n${JSON.stringify(categories)}` }
+                            ],
+                            response_format: { type: "json_schema", json_schema: QC_SCHEMA }
+                        })
+                    });
+                    if(!res.ok) return [];
+                    const data = await res.json();
+                    return JSON.parse(data.choices[0].message.content).categoryAnalysis || [];
+                } catch(e) { console.error("QC Error", e); return []; }
+            };
+
+            const performQualityCheck = async () => {
+                if (!openaiKey) return;
+                for (let l = 1; l <= 3; l++) {
+                    const pool = categoryPools[l];
+                    if (!pool || pool.length <= 15) continue;
+
+                    const oldestCats = pool.slice(0, 5);
+                    const analysis = await callOpenAI_QC(oldestCats.map(c => ({
+                        category: c.category,
+                        questions: c.questions.map(q => ({ q: q.question, a: q.correctAnswer, opts: q.options }))
+                    })));
+
+                    if(analysis.length === 0) continue;
+
+                    const ranked = analysis.map(a => {
+                        const catIndex = a.categoryIndex;
+                        const weakCount = a.weakQuestionIndices.length;
+                        const strongCount = 4 - weakCount;
+                        return { catIndex, weakIndices: a.weakQuestionIndices, strongCount };
+                    }).sort((a, b) => a.strongCount - b.strongCount);
+
+                    const worst3Indices = new Set(ranked.slice(0, 3).map(r => r.catIndex));
+                    const best2 = ranked.slice(3, 5);
+
+                    setCategoryPools(prev => {
+                        const currentPool = [...prev[l]];
+                        const finalPool = [];
+                        for(let i=0; i<5; i++) {
+                            if(worst3Indices.has(i)) continue;
+                            const refineInfo = best2.find(b => b.catIndex === i);
+                            if(refineInfo) {
+                                let cat = { ...currentPool[i] };
+                                if(refineInfo.weakIndices.length > 0) {
+                                    const badQIdx = refineInfo.weakIndices[0];
+                                    cat.questions = cat.questions.filter((_, qIdx) => qIdx !== badQIdx);
+                                }
+                                if(cat.questions.length >= 3) finalPool.push(cat);
+                            } else { finalPool.push(currentPool[i]); }
+                        }
+                        if (currentPool.length > 5) finalPool.push(...currentPool.slice(5));
+                        return { ...prev, [l]: finalPool };
+                    });
+                }
+            };
+
+            const callGemini = async (prompt) => {
+                if (!geminiKey) return null;
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${geminiKey}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+                    });
+                    if (!response.ok) return null;
+                    const data = await response.json();
+                    return JSON.parse(data.candidates[0].content.parts[0].text);
+                } catch (e) { console.error("Gemini Error", e); return null; }
+            };
+
+            const generateZenInsight = async () => {
+                if(!geminiKey) return;
+                const prompt = `Generate a very short (max 15 words), philosophical, encouraging 'Zen Insight' for a player who has a score of ${score} and streak of ${streak}. Theme: Focus, Flow, Light, Breathing. JSON: { "insight": "string" }`;
+                const res = await callGemini(prompt);
+                if(res && res.insight) setZenInsight(res.insight);
+            };
+
+            const handleCustomThemeGeneration = async () => {
+                if(!customTopic || !geminiKey) return;
+                setIsGeneratingCustom(true);
+                const prompt = `Generate 4 distinct trivia sub-category names related to the topic '${customTopic}'. JSON: { "categories": ["string", "string", "string", "string"] }`;
+                const res = await callGemini(prompt);
+                if(res && res.categories && res.categories.length === 4) {
+                    const newCats = res.categories;
+                    const pLevel = getPoolLevel(level);
+                    const qPrompt = `Generate 4 multiple-choice questions for EACH of these categories: ${newCats.join(', ')}. Level ${pLevel}. Max Q 100 chars, Max A 20 chars. Output JSON array: {category, questions: [{question, correctAnswer, options[]}]}`;
+                    const qRes = await callGemini(qPrompt);
+                    if(qRes && Array.isArray(qRes)) {
+                        const valid = qRes.filter(c => {
+                            c.questions = c.questions.filter(validateQuestionLength);
+                            c.color = getRandomPastel();
+                            return c.questions.length >= 3;
+                        });
+                        const newOptions = valid.map((c, i) => ({ ...c, index: -1 }));
+                        setAvailableSelection(newOptions);
+                        setCategoryGridPositions(generateGridPositions(newOptions.length, 1, 2));
+                        setCustomTopic("");
+                    }
+                }
+                setIsGeneratingCustom(false);
+            };
+
+            const triggerOpenAIBatch = async () => {
+                if (!openaiKey) { triggerGeminiBatch(); return; }
+                const l1 = getUnusedThemes(1, 2);
+                const l2 = getUnusedThemes(2, 2);
+                const l3 = getUnusedThemes(3, 2);
+                if (l1.length + l2.length + l3.length === 0) return;
+                markThemesUsed([...l1, ...l2, ...l3]);
+                const batch = await callOpenAI(l1, l2, l3);
+                if (batch) {
+                    setCategoryPools(prev => ({ 1: [...prev[1], ...batch.level1], 2: [...prev[2], ...batch.level2], 3: [...prev[3], ...batch.level3] }));
+                } else { triggerGeminiBatch(); }
+            };
+
+            const triggerGeminiBatch = async () => {
+                if (!geminiKey) return;
+                const lvlToFill = categoryPools[1].length < 10 ? 1 : (categoryPools[2].length < 10 ? 2 : 3);
+                const candidates = getUnusedThemes(lvlToFill, 4);
+                if (candidates.length === 0) return;
+                markThemesUsed(candidates);
+                const prompt = `Generate 4 multiple-choice questions for EACH: ${candidates.join(', ')}. Level ${lvlToFill}. Max Q 100 chars, Max A 20 chars. Output JSON array: {category, questions: [{question, correctAnswer, options[]}]}`;
+                const res = await callGemini(prompt);
+                if(res && Array.isArray(res)) {
+                    const valid = res.filter(c => {
+                        c.questions = c.questions.filter(validateQuestionLength);
+                        c.color = getRandomPastel();
+                        return c.questions.length >= 3;
+                    });
+                    setCategoryPools(prev => ({...prev, [lvlToFill]: [...prev[lvlToFill], ...valid]}));
+                }
+            };
+
+            const triggerMultiSelectBatch = async () => {
+                if (!geminiKey || multiSelectPool.length >= 3) return;
+                const prompt = `Generate 2 special "Multi-Select" categories. Examples: Prime Numbers, Capital Cities, Planets, Mammals, Oscar Winners. For each, provide 'category', 'correct' (array of 3-8 correct strings, max 20 chars), and 'wrong' (array of strings to bring total correct+wrong to at least 16). Output JSON array: [{category, correct: [], wrong: []}]`;
+                const res = await callGemini(prompt);
+                if(res && Array.isArray(res)) {
+                    setMultiSelectPool(prev => [...prev, ...res]);
+                }
+            };
+
+            const fetchOpenTDB = async (lvl) => {
+                let diff = lvl === 1 ? 'easy' : lvl === 2 ? 'medium' : 'hard';
+                const catId = OPENTDB_CATS[Math.floor(Math.random() * OPENTDB_CATS.length)];
+                try {
+                    const res = await fetch(`https://opentdb.com/api.php?amount=10&category=${catId}&difficulty=${diff}&type=multiple`);
+                    const data = await res.json();
+                    if(data.results && data.results.length > 0) {
+                        let cleanName = data.results[0].category.split(':').pop().trim();
+                        const validQs = data.results.filter(q => validateQuestionLength({ question: q.question, correct_answer: q.correct_answer, incorrect_answers: q.incorrect_answers }));
+                        if (validQs.length >= 4) {
+                            const questions = validQs.slice(0, 4).map(q => ({
+                                question: q.question, correctAnswer: q.correct_answer, options: [...q.incorrect_answers, q.correct_answer].sort(()=>Math.random()-0.5)
+                            }));
+                            return { category: cleanName, questions, level: lvl, color: getRandomPastel() };
+                        }
+                    }
+                } catch(e) { console.error("OpenTDB error", e); }
+                return null;
+            };
+
+            const ensureOpenTDBBuffer = async () => {
+                const updates = { 1: [], 2: [], 3: [] };
+                const fetchBatch = async (l, c) => { const p=[]; for(let i=0;i<c;i++) p.push(fetchOpenTDB(l)); return Promise.all(p); };
+                for (let l=1; l<=3; l++) {
+                    if (categoryPools[l].length < 10) {
+                        const needed = 5 - categoryPools[l].length;
+                        const batchSize = needed > 0 ? needed : 1;
+                        const batch = await fetchBatch(l, batchSize);
+                        batch.forEach(b => { if(b) updates[l].push(b); });
+                    }
+                }
+                if (updates[1].length || updates[2].length || updates[3].length) {
+                    setCategoryPools(prev => ({ 1: [...prev[1], ...updates[1]], 2: [...prev[2], ...updates[2]], 3: [...prev[3], ...updates[3]] }));
+                }
+            };
+
+            const startGameSequence = async () => {
+                triggerOpenAIBatch();
+                triggerGeminiBatch();
+                const init = { 1: [], 2: [], 3: [] };
+                for(let l=1; l<=3; l++) {
+                    let attempts = 0;
+                    while(init[l].length < 5 && attempts < 10) {
+                        const d = await fetchOpenTDB(l);
+                        if(d) init[l].push(d);
+                        attempts++;
+                    }
+                }
+                setCategoryPools(p => ({ 1: [...p[1], ...init[1]], 2: [...p[2], ...init[2]], 3: [...p[3], ...init[3]] }));
+            };
+
+            const handleUseKey = (provider) => {
+                if(provider === 'openai' && openaiKey) triggerOpenAIBatch();
+                if(provider === 'gemini' && geminiKey) triggerGeminiBatch();
+            };
+
+            // --- Event Handlers ---
+            const handleFileChange = (e) => { const f = Array.from(e.target.files); if(f.length) setPlaylist(p => [...p, ...f.map(file => URL.createObjectURL(file))]); };
+            const handleVideoEnd = () => setCurrentVideoIdx(p => (p + 1) % playlist.length);
+
+            useEffect(() => {
+                if (phase === 'LIGHT') {
+                    performQualityCheck();
+                    const timer = setTimeout(() => {
+                        if (categoryPools[1].length < 15) triggerGeminiBatch();
+                        setPhase('PRE_BREATH');
+                    }, 15000);
+                    return () => clearTimeout(timer);
+                }
+            }, [phase]);
+
+            const startFirstGame = () => { if(!playlist.length) return alert("No video"); startGameSequence(); prepareCategorySelection(); if(videoRef.current) videoRef.current.play(); };
+
+            const startBreathing = () => {
+                if (categoryPools[1].length < 15) triggerOpenAIBatch();
+                setBreathingStartTime(Date.now());
+                setPhase('BREATHING');
+            };
+
+            // Score Decay
+            useEffect(() => {
+                if (phase === 'PRE_BREATH') {
+                    decayTimerRef.current = setInterval(() => {
+                        setScore(s => Math.max(0, s - 10));
+                    }, 1000);
+                } else {
+                    clearInterval(decayTimerRef.current);
+                }
+                return () => clearInterval(decayTimerRef.current);
+            }, [phase]);
+
+            useEffect(() => {
+                if (phase === 'BREATHING') {
+                    const timer = setTimeout(() => {
+                        triggerMultiSelectBatch();
+                    }, 8000);
+                    return () => clearTimeout(timer);
+                }
+            }, [phase]);
+
+            const finishBreathing = () => {
+                const secs = (Date.now() - breathingStartTime) / 1000;
+                setTriviaTimeLeft(Math.max(30, Math.floor(secs * 2)));
+                ensureOpenTDBBuffer();
+                setRoundCount(r => r + 1);
+
+                if (roundCount >= 10) {
+                    setPhase('GAME_OVER');
+                } else {
+                    setLevel(1); setQuestions([]); setCurrentQIndex(0); prepareCategorySelection();
+                }
+            };
+
+            // --- Trivia Flow ---
+            const generateGridPositions = (count, minRow, maxRow) => {
+                const possible = [];
+                for(let r=minRow; r<=maxRow; r++) {
+                    for(let c=1; c<=4; c++) possible.push((r-1)*4 + (c-1));
+                }
+                possible.sort(() => Math.random() - 0.5);
+                return possible.slice(0, count);
+            };
+
+            const startMultiSelectRound = () => {
+                if(multiSelectPool.length === 0) { setLevel(l => l + 1); prepareCategorySelection(); return; }
+                const ms = multiSelectPool[0]; setMultiSelectPool(prev => prev.slice(1));
+                let items = [...ms.correct];
+                const needed = 16 - items.length;
+                const fillers = ms.wrong.slice(0, needed);
+                items = [...items, ...fillers];
+                while(items.length < 16) items.push("X");
+                items.sort(() => Math.random() - 0.5);
+                setCurrentMultiSelect({ ...ms, allItems: items }); setFoundMultiIndices(new Set());
+                setPhase('MULTI_SELECT'); setCurrentCategoryName("Select all: " + ms.category); setCurrentColor('bg-indigo-900/50 text-white border-indigo-500');
+                setGridPositions(generateGridPositions(16, 1, 4));
+            };
+
+            const prepareCategorySelection = () => {
+                const pLevel = getPoolLevel(level);
+                const pool = categoryPools[pLevel];
+                const opts = []; const idxs = new Set();
+                if (!pool.length) opts.push({ name: "Loading...", questions: [] });
+                else {
+                    while(opts.length < Math.min(4, pool.length)) {
+                        const i = Math.floor(Math.random() * pool.length);
+                        if(!idxs.has(i)) { idxs.add(i); opts.push({ ...pool[i], index: i }); }
+                    }
+                }
+                setAvailableSelection(opts);
+                setCategoryGridPositions(generateGridPositions(opts.length, 1, 2));
+                setPhase('TRIVIA_CATEGORY_SELECT');
+            };
+
+            const activateCategory = (sel) => {
+                if(!sel.questions.length) return;
+                if (sel.index >= 0) {
+                    const pLevel = getPoolLevel(level);
+                    setCategoryPools(p => ({ ...p, [pLevel]: p[pLevel].filter((_, i) => i !== sel.index) }));
+                }
+                setCurrentCategoryName(sel.category || sel.name);
+                setCurrentColor(sel.color || PASTEL_COLORS[0]);
+
+                const playableQs = sel.questions.slice(0, 3).map(q => {
+                    let all = q.options || [...q.incorrect_answers, q.correct_answer];
+                    // Filter hyphens
+                    all = all.filter(a => a !== "-");
+
+                    let need = getPoolLevel(level) === 1 ? 3 : getPoolLevel(level) === 2 ? 4 : 6;
+                    while(all.length < need) all.push("?"); // Fallback char if API fails to provide enough
+                    if(all.length > 6) all = all.slice(0, 6);
+                    return { ...q, correct_answer: q.correctAnswer || q.correct_answer, all_answers: all.sort(()=>Math.random()-0.5) };
+                });
+                setQuestions(playableQs); setCurrentQIndex(0);
+
+                const pLevel = getPoolLevel(level);
+                let minR = 1, maxR = 2;
+                if(pLevel === 2) { minR = 3; maxR = 4; }
+                if(pLevel === 3) { minR = 4; maxR = 6; }
+
+                setGridPositions(generateGridPositions(playableQs[0].all_answers.length, minR, maxR));
+                setPhase('TRIVIA');
+            };
+
+            const handleAnswerClick = (ans, idx) => {
+                if(lockout || phase !== 'TRIVIA' || correctAnswerId !== null) return;
+                const q = questions[currentQIndex];
+                const isCorrect = ans === q.correct_answer;
+                if(isCorrect) {
+                    setCorrectAnswerId(idx);
+                    const pts = Math.floor((100 + (streak * 20)) * (1 + level * 0.2));
+                    const id = Date.now(); setScorePopups(p => [...p, {id, pts}]); setTimeout(() => setScorePopups(p => p.filter(x => x.id !== id)), 1500);
+                    setScore(s => s + pts); setStreak(s => s + 1);
+                    setTimeout(() => {
+                        setCorrectAnswerId(null); setWrongAnswers(new Set());
+                        const next = currentQIndex + 1;
+                        if(next >= questions.length) {
+                            if (level % 2 === 0 && multiSelectPool.length > 0) {
+                                startMultiSelectRound();
+                            } else {
+                                setLevel(l => l + 1);
+                                prepareCategorySelection();
+                            }
+                        }
+                        else {
+                            setCurrentQIndex(next);
+                            const pLevel = getPoolLevel(level);
+                            let minR = 1, maxR = 2;
+                            if(pLevel === 2) { minR = 3; maxR = 4; }
+                            if(pLevel === 3) { minR = 4; maxR = 6; }
+                            setGridPositions(generateGridPositions(questions[next].all_answers.length, minR, maxR));
+                        }
+                    }, 2000); // 2 Second Pause
+                } else {
+                    setStreak(0); setLockout(true); setTempWrongId(idx);
+                    setScore(s => Math.max(0, s - 50)); // Penalty
+                    setTriviaTimeLeft(t => Math.max(0, t - 1)); // Time Penalty
+                    const id = Date.now(); setScorePopups(p => [...p, {id, pts: -50, isNeg: true}]); setTimeout(() => setScorePopups(p => p.filter(x => x.id !== id)), 1500);
+                    lockoutTimerRef.current = setTimeout(() => { setLockout(false); setTempWrongId(null); setWrongAnswers(s => new Set(s).add(idx)); }, 4000);
+                }
+            };
+
+            const handleMultiSelectClick = (item, idx) => {
+                if(lockout || foundMultiIndices.has(idx)) return;
+                const isCorrect = currentMultiSelect.correct.includes(item);
+
+                if(isCorrect) {
+                    const newFound = new Set(foundMultiIndices);
+                    newFound.add(idx);
+                    setFoundMultiIndices(newFound);
+                    setScore(s => s + 50);
+                    const totalCorrectInGrid = currentMultiSelect.allItems.filter(it => currentMultiSelect.correct.includes(it)).length;
+                    if (newFound.size === totalCorrectInGrid) {
+                        setTimeout(() => {
+                            setLevel(l => l + 1);
+                            prepareCategorySelection();
+                        }, 1000);
+                    }
+                } else {
+                    setStreak(0);
+                    setLockout(true);
+                    setTempWrongId(idx);
+                    setScore(s => Math.max(0, s - 50));
+                    setTimeout(() => {
+                        setLockout(false);
+                        setTempWrongId(null);
+                    }, 4000);
+                }
+            };
+
+            // --- Timers & Render Helpers ---
+            useEffect(() => {
+                if(phase === 'TRIVIA' || phase === 'TRIVIA_CATEGORY_SELECT' || phase === 'MULTI_SELECT') {
+                    triviaTimerRef.current = setInterval(() => setTriviaTimeLeft(t => { if(t<=1) { setPhase('LIGHT'); return 0; } return t-1; }), 1000);
+                } else clearInterval(triviaTimerRef.current);
+                return () => clearInterval(triviaTimerRef.current);
+            }, [phase]);
+
+            useEffect(() => {
+                if(phase === 'BREATHING') {
+                    let t = 0;
+                    let countVal = 4;
+                    setBreathCyclePhase('INHALE'); setBreathCount(4);
+                    breathTimerRef.current = setInterval(() => {
+                        t = (t+1)%10;
+                        if (t < 4) { setBreathCyclePhase('INHALE'); countVal = 4 - t; }
+                        else if (t < 6) { setBreathCyclePhase('HOLD'); countVal = 0; }
+                        else { setBreathCyclePhase('EXHALE'); countVal = 4 - (t-6); }
+                        setBreathCount(countVal > 0 ? countVal : "");
+                    }, 1000);
+                    pointsTimerRef.current = setInterval(() => setScore(s => s + 5), 1000);
+                } else { clearInterval(breathTimerRef.current); clearInterval(pointsTimerRef.current); }
+                return () => { clearInterval(breathTimerRef.current); clearInterval(pointsTimerRef.current); }
+            }, [phase]);
+
+            const renderGrid = (items, pos) => items.map((c, i) => {
+                const p = pos[i]; if(p===undefined) return null;
+                return <div key={i} className="flex items-center justify-center relative p-1" style={{ gridColumn: (p%4)+1, gridRow: Math.floor(p/4)+1 }}><div className="pointer-events-auto w-full h-full flex items-center justify-center">{c}</div></div>;
+            });
+
+            return (
+                <div className="relative w-screen h-screen bg-black text-white flex flex-col overflow-hidden">
+                    <div className={`h-[10vh] flex items-center justify-center bg-gradient-to-b from-black to-transparent z-30 relative transition-colors duration-500 ${phase === 'TRIVIA' ? currentColor.split(' ')[0].replace('/50','/20') : ''}`}>
+                        {phase === 'TRIVIA' && questions[currentQIndex] && <h2 className={`text-xl font-bold text-center px-4 py-2 rounded shadow-lg ${currentColor}`} dangerouslySetInnerHTML={{ __html: questions[currentQIndex].question }} />}
+                        {phase === 'MULTI_SELECT' && <h2 className="text-3xl font-bold animate-pulse text-indigo-300">{currentCategoryName}</h2>}
+                        {phase === 'TRIVIA_CATEGORY_SELECT' && <h2 className="text-2xl font-bold animate-pulse">Select Theme</h2>}
+                        {phase === 'TRIVIA_CATEGORY_SELECT' && (
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex gap-2">
+                                <input type="text" value={customTopic} onChange={(e) => setCustomTopic(e.target.value)} placeholder="Enter Topic..." className="bg-gray-900/80 border border-white/20 rounded px-2 py-1 text-sm outline-none w-32 focus:w-64 transition-all text-white" />
+                                <button onClick={handleCustomThemeGeneration} disabled={isGeneratingCustom || !customTopic} className="bg-purple-600 px-3 py-1 rounded text-sm font-bold">Gen</button>
+                            </div>
+                        )}
+                    </div>
+                    <div className="h-[80vh] w-full relative bg-black flex items-center justify-center">
+                        {playlist.length ? <video ref={videoRef} src={playlist[currentVideoIdx]} muted={isMuted} className="w-full h-full object-cover absolute z-0" onEnded={handleVideoEnd} autoPlay playsInline /> : <div className="text-gray-500 z-0">No Video</div>}
+                        <div className="absolute inset-0 z-20 grid grid-cols-5 grid-rows-6 p-4 pointer-events-none">
+                            {(phase.startsWith('TRIVIA') || phase === 'MULTI_SELECT') && <>
+                                <div className="col-start-5 row-start-1 row-span-2 flex flex-col items-center justify-center m-1 rounded bg-black/20"><span className={`text-8xl font-black ${triviaTimeLeft<10?'text-red-500 animate-pulse':'text-white'}`}>{triviaTimeLeft}</span></div>
+                                <div className="col-start-5 row-start-3 flex flex-col items-center justify-center glass-panel m-1 rounded text-center"><span className="text-[10px] font-bold text-gray-300">THEME</span><div className="text-xs font-bold leading-tight">{currentCategoryName}</div></div>
+                                <div className="col-start-5 row-start-4 flex flex-col items-center justify-center glass-panel m-1 rounded"><span className="text-[10px] font-bold text-gray-300">LEVEL</span><span className="text-2xl font-black">{level}</span></div>
+                                <div className="col-start-5 row-start-5 row-span-2 flex flex-col items-center justify-center m-1 rounded bg-white/20"><span className="text-3xl font-black text-green-400 font-mono">{Math.floor(score).toLocaleString()}</span></div>
+                            </>}
+
+                            {phase === 'TRIVIA_CATEGORY_SELECT' && renderGrid(availableSelection.map(c => <button key={c.name||c.category} onClick={() => activateCategory(c)} className={`w-full h-full rounded-xl flex items-center justify-center text-lg font-bold shadow-2xl border backdrop-blur-md transition-transform hover:scale-105 ${c.color || PASTEL_COLORS[0]}`}>{c.name || c.category}</button>), categoryGridPositions)}
+
+                            {phase === 'TRIVIA' && questions[currentQIndex] && renderGrid(questions[currentQIndex].all_answers.map((ans, idx) => {
+                                if(wrongAnswers.has(idx)) return null;
+                                let style = `${currentColor} opacity-90 hover:opacity-100`;
+                                if(correctAnswerId === idx) style = "correct-flash bg-green-500 text-white border-green-400";
+                                else if(tempWrongId === idx) style = "bg-red-600 text-white border-red-500 animate-pulse";
+                                else if(lockout) style = "opacity-30 cursor-not-allowed bg-gray-800 border-gray-700";
+                                return <button key={idx} onClick={() => handleAnswerClick(ans, idx)} disabled={lockout || correctAnswerId !== null} className={`w-full h-full rounded-lg text-sm font-bold border-2 shadow-md backdrop-blur-sm transition-all ${style}`} dangerouslySetInnerHTML={{ __html: ans }} />;
+                            }), gridPositions)}
+
+                            {phase === 'MULTI_SELECT' && renderGrid(currentMultiSelect.allItems.map((item, idx) => {
+                                let style = "bg-indigo-900/50 border-indigo-500/50 text-white hover:bg-indigo-800/80";
+                                if(foundMultiIndices.has(idx)) style = "bg-green-500 text-white border-green-400 shadow-[0_0_15px_rgba(34,197,94,0.6)] transform scale-95";
+                                else if(tempWrongId === idx) style = "bg-red-600 text-white border-red-500 animate-pulse";
+                                else if(lockout) style = "opacity-30 cursor-not-allowed bg-gray-800";
+                                return <button key={idx} onClick={() => handleMultiSelectClick(item, idx)} disabled={lockout || foundMultiIndices.has(idx)} className={`w-full h-full rounded-lg text-sm font-bold border-2 shadow-md backdrop-blur-sm transition-all ${style}`}>{item}</button>;
+                            }), gridPositions)}
+                        </div>
+                        {scorePopups.map(p => <div key={p.id} className={`score-popup top-1/2 left-1/2 ${p.isNeg ? 'score-popup-neg' : ''}`}>{p.pts > 0 ? '+' : ''}{p.pts}</div>)}
+                    </div>
+                    {phase !== 'SETUP' && phase !== 'GAME_OVER' && <div className="h-[10vh] bg-black/80 flex items-center justify-center gap-2 z-40 border-t border-white/5">
+                        <Button onClick={() => setCurrentVideoIdx(p => (p-1+playlist.length)%playlist.length)} className="bg-gray-800 hover:bg-gray-700 text-xs text-blue-300">Prev</Button>
+                        <Button onClick={() => videoRef.current.currentTime-=300} className="bg-gray-800 hover:bg-gray-700 text-xs">-5m</Button>
+                        <Button onClick={() => videoRef.current.currentTime-=60} className="bg-gray-800 hover:bg-gray-700 text-xs">-1m</Button>
+                        <Button onClick={() => videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause()} className="bg-blue-600/80 hover:bg-blue-500 text-sm px-6">Play/Pause</Button>
+                        <Button onClick={() => setIsMuted(!isMuted)} className="bg-gray-700 hover:bg-gray-600 text-xs w-20">{isMuted ? "Unmute" : "Mute"}</Button>
+                        <Button onClick={() => videoRef.current.currentTime+=60} className="bg-gray-800 hover:bg-gray-700 text-xs">+1m</Button>
+                        <Button onClick={() => videoRef.current.currentTime+=300} className="bg-gray-800 hover:bg-gray-700 text-xs">+5m</Button>
+                        <Button onClick={() => setCurrentVideoIdx(p => (p+1)%playlist.length)} className="bg-gray-800 hover:bg-gray-700 text-xs text-blue-300">Next</Button>
+                    </div>}
+                    {phase === 'SETUP' && <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center space-y-6"><h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-gray-200 to-gray-500">Focus Flow</h1><div className="p-8 bg-gray-900 rounded-2xl border border-gray-800 flex flex-col gap-4 w-96 shadow-2xl">
+                        <div className="flex gap-2 items-end"><div className="flex-1"><label className="text-xs font-bold text-gray-400">OpenAI API Key</label><input type="password" value={openaiKey} onChange={handleOpenAIChange} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white outline-none"/></div><Button onClick={() => handleUseKey('openai')} className="bg-blue-600 py-2 text-xs h-10">Use Key</Button></div>
+                        <div className="flex gap-2 items-end"><div className="flex-1"><label className="text-xs font-bold text-gray-400">Gemini API Key</label><input type="password" value={geminiKey} onChange={handleGeminiChange} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white outline-none"/></div><Button onClick={() => handleUseKey('gemini')} className="bg-blue-600 py-2 text-xs h-10">Use Key</Button></div>
+                        <div className="h-px bg-gray-800 my-2"></div>
+                        <div><label className="text-xs font-bold text-gray-400">Playlist</label><input type="file" multiple accept="video/*" onChange={handleFileChange} className="block w-full text-sm text-gray-400 file:bg-blue-600 file:text-white cursor-pointer"/><div className="text-xs text-gray-500 mt-1">{playlist.length} videos</div></div>
+                        <Button onClick={startFirstGame} disabled={!playlist.length} className="bg-green-600 w-full py-3 mt-2">START SESSION</Button></div></div>}
+
+                    {phase === 'GAME_OVER' && <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center space-y-6">
+                        <h1 className="text-6xl font-black text-white mb-4">SESSION COMPLETE</h1>
+                        <div className="text-8xl font-black text-green-400 mb-8">{Math.floor(score).toLocaleString()}</div>
+                        <div className="text-xl text-gray-400 mb-8">Rounds Completed: 10</div>
+                        <Button onClick={() => window.location.reload()} className="bg-blue-600 w-48 py-4 text-xl rounded-full">New Session</Button>
+                    </div>}
+
+                    {phase === 'LIGHT' && <div className="absolute inset-0 z-50 fire-overlay flex flex-col items-center justify-center pointer-events-none text-center p-10">
+                        <h1 className="text-[8rem] font-black text-yellow-100 opacity-80 animate-pulse">LIGHT</h1>
+                        {zenInsight && <div className="mt-8 text-2xl font-serif text-white/90 italic max-w-2xl glass-panel p-6 rounded-xl animate-[floatUp_10s_ease-in-out]">{zenInsight}</div>}
+                    </div>}
+
+                    {phase === 'PRE_BREATH' && <div className="absolute inset-0 z-50 subtle-overlay backdrop-blur-sm flex items-center justify-center"><Button onClick={startBreathing} className="bg-blue-500/80 text-white text-3xl px-12 py-6 rounded-3xl animate-bounce backdrop-blur-md shadow-xl border border-white/20">Start Breaths</Button></div>}
+
+                    {phase === 'BREATHING' && <div className="absolute inset-0 z-50 flex flex-col items-center justify-center transition-colors duration-1000" style={{ backgroundColor: breathCyclePhase === 'INHALE' ? 'rgba(34,197,94,0.2)' : breathCyclePhase === 'EXHALE' ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.1)' }}>
+                        {breathCyclePhase === 'INHALE' && <CloudCanvas direction="inhale" />}
+                        {breathCyclePhase === 'EXHALE' && <CloudCanvas direction="exhale" />}
+                        <h1 className="text-8xl font-black text-white mb-4 drop-shadow-2xl">{breathCyclePhase}</h1>
+                        {breathCount && <div className="text-[10rem] font-black text-white/50 animate-pulse">{breathCount}</div>}
+                        <Button onClick={finishBreathing} className="bg-white text-black mt-10 px-8 py-3 text-lg absolute bottom-20">FINISHED</Button>
+                    </div>}
+                </div>
+            );
+        };
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
