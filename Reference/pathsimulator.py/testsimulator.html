@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Breath Absorb Quota Test v23</title>
+  <style>
+    body {
+      background: #020617;
+      color: #f9fafb;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    label {
+      font-size: 14px;
+    }
+    input[type="number"] {
+      background: #020617;
+      color: #f9fafb;
+      border: 1px solid #4b5563;
+      border-radius: 4px;
+      padding: 4px 8px;
+      width: 80px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    #status {
+      font-size: 12px;
+      margin-bottom: 8px;
+      max-width: 1000px;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #simContainer {
+      border: 2px solid #6b7280;
+      width: 1000px;
+      height: 600px;
+      position: relative;
+      margin-bottom: 8px;
+      background: #000;
+    }
+    #simCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      /* slight blur over the whole game area */
+      filter: blur(3px);
+    }
+    #log {
+      font-size: 13px;
+      max-width: 1000px;
+      align-self: stretch;
+      background: #020617;
+      border-radius: 4px;
+      padding: 8px;
+      border: 1px solid #1f2937;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    #log div {
+      margin-bottom: 2px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      margin-left: 4px;
+      background: #1f2937;
+    }
+  </style>
+</head>
+<body>
+  <h1>Breath Absorb Quota Test (1000×600)</h1>
+
+  <div id="controls">
+    <label>
+      Absorb quota:
+      <input id="quotaInput" type="number" min="1" max="400" value="90">
+    </label>
+    <button id="startButton">Start Breathing</button>
+    <button id="restartButton">Restart</button>
+    <span id="genInfo" style="font-size:12px; opacity:0.8;"></span>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="simContainer">
+    <canvas id="simCanvas" width="1000" height="600"></canvas>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    // ===== Constants =====
+    const WIDTH = 1000;
+    const HEIGHT = 600;
+
+    const PANEL_WIDTH = 256;  // left UI panel width (drawn inside canvas)
+
+    const GEN_DURATION = 20;
+    const SPAWN_INTERVAL = 0.02;
+
+    const DECAY_RATE = 3;
+
+    const INHALE_DURATION = 5;
+    const HOLD_DURATION = 3;
+    const EXHALE_DURATION = 4;
+    const MAX_BREATHS = 6;
+
+    // Absorb mouth inside bottom-left of game area (still at x 0–20 in this harness)
+    const ABSORB_W = 20;
+    const ABSORB_H = 100;
+
+    // Tube geometry (visual): 256-wide tube, 20px "mouth" conceptually poking into game
+    const TUBE_TOTAL_WIDTH = 256;   // full tube width drawn in score panel
+    const TUBE_HEIGHT = ABSORB_H;
+    const TUBE_RIGHT_X = TUBE_TOTAL_WIDTH; // right edge of tube at x=256
+    const TUBE_LEFT_X = TUBE_RIGHT_X - TUBE_TOTAL_WIDTH; // x=0
+    const TUBE_Y = HEIGHT - TUBE_HEIGHT;
+
+    // Mouth region for tunnel physics (keep anchored bottom-left)
+    const MOUTH_X = 0;
+    const MOUTH_Y = HEIGHT - ABSORB_H;
+    const MOUTH_W = ABSORB_W;
+    const TUNNEL_DEPTH_THRESHOLD = 150; // px "deep" into the tube before absorb
+
+    // Label box for friction (over panel timer + word)
+    const LABEL_BOX = {
+      cx: PANEL_WIDTH / 2,
+      cy: 150,
+      halfW: 120,
+      halfH: 80
+    };
+
+    // ===== Colour groups =====
+    const COLOR_GROUPS = {
+      "VLightHotPink": ["#FFCBE5","#FFDDF0","#FFF0F5","#ffffff"],
+      "PurpleyPinky": ["#F4CCE9","#EBD3F8","#E3DFFD","#F5E9FF"],
+      "Gally": ["#F4CCE9","#EBD3F8","#E3DFFD","#F5E9FF"],
+      "LushBluey_Purple": ["#BDB2FF","#D6D0FF","#EBE4FF","#ffffff"],
+      "GreyPurple": ["#E3DFFD","#F5E9FF","#F4EEFF","#F5EFFF"],
+      "LightPurple": ["#E3DFFD","#F5E9FF","#F5EFFF","#fef9ff"],
+      "NiceOrangey": ["#F9A49E","#FFC8A2","#FFD6A5","#ffdbbb"],
+      "YellowyOrange": ["#F9A49E","#ffdbbb","#FFF2C6","#FFF8E6"],
+      "RedyOrangey": ["#FFF2C6","#F9F5F6","#FFF8E6","#fef9ff"],
+      "Yellowy": ["#FFEE91","#FFF2C6","#FCFFBF","#FFFFD2"],
+      "BrightYellow": ["#FFEE91","#FFF8E6","#FCFFBF","#FFFFD2"],
+      "YellowWhite": ["#FFF2C6","#F9F5F6","#FFF8E6","#fef9ff"],
+      "VLightNeonGreen": ["#D1FF99","#E6FFCC","#F0FFF0","#ffffff"],
+      "Greeny": ["#CDF0EA","#EBFFD8","#FCFFBF","#EDFFF0","#fdfffc"],
+      "GreenyYellow": ["#CDF0EA","#EBFFD8","#FCFFBF","#EDFFF0"],
+      "PaleLime": ["#ebeff1","#EEF1FF","#EBFFD8","#EDFFF0"],
+      "GreenMix": ["#D1FF99","#ebeff1","#EBFFD8","#EDFFF0","#fdfffc"],
+      "GreatCyany": ["#A0E7E5","#9BF6FF","#CDF0EA","#ecf7fd"],
+      "Tealy": ["#D2DAFF","#CDF0EA","#EBFFD8","#EDFFF0","#F0FFFA"],
+      "Mint": ["#CDF0EA","#E0F4FF","#ecf7fd","#fdfffc"],
+      "LushBluey_Blue": ["#A0C4FF","#D2DAFF","#E6F0FF","#ffffff"],
+      "Bluey": ["#D2DAFF","#ebeff1","#E0F4FF","#EEF1FF","#ecf7fd"],
+      "BlueyLight": ["#D2DAFF","#ebeff1","#EEF1FF","#ecf7fd"],
+      "Snowy": ["#D2DAFF","#E0F4FF","#EEF1FF","#ecf7fd"],
+      "Ice": ["#ebeff1","#E0F4FF","#EEF1FF","#ecf7fd"],
+      "BluesGreen": ["#ebeff1","#E0F4FF","#EBFFD8","#EDFFF0"]
+    };
+    const COLOR_GROUP_KEYS = Object.keys(COLOR_GROUPS);
+    let paletteStats = null;
+
+    // ===== State =====
+    let canvas, ctx;
+    let statusDiv, logDiv, quotaInput, startButton, restartButton, genInfoSpan;
+
+    let ovals = [];
+    let circles = [];
+    let eggs = [];
+    let tvs = [];
+    let rhombi = [];
+
+    let simTime = 0;
+    let lastTime = null;
+
+    let stage = "GEN";      // "GEN", "IDLE", "BREATHING", "DONE"
+    let genElapsed = 0;
+    let spawnAccumulator = 0;
+
+    let absorbQuota = 90;
+    let absorbingCount = 0;
+    let quotaSlowedThisBreath = false;
+
+    let breathing = false;
+    let breathPhase = null; // "INHALE", "HOLD", "EXHALE"
+    let phaseTime = 0;
+    let currentBreath = 0;
+
+    let totalScore = 0;
+    let totalAbsorbed = 0;
+    let breathStats = {};
+
+    let dirCopyAccumulator = 0;
+    let gustAccumulator = 0;
+
+    let lastCreatedShape = null;
+
+    // ===== Utility =====
+    function randRange(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    function hexToRgb(hex) {
+      hex = hex.replace("#", "");
+      if (hex.length === 3) hex = hex.split("").map(c => c + c).join("");
+      const num = parseInt(hex, 16);
+      return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+    }
+    function ensureBreathStats(b) {
+      if (!breathStats[b]) {
+        breathStats[b] = { breath: b, absorbed: 0, score: 0, aliveAfter: 0 };
+      }
+    }
+    function pickGroupAndColor() {
+      const groupName = COLOR_GROUP_KEYS[randInt(0, COLOR_GROUP_KEYS.length - 1)];
+      const group = COLOR_GROUPS[groupName];
+      const color = group[randInt(0, group.length - 1)];
+      return { groupName, color };
+    }
+
+    function computePaletteStats() {
+      if (paletteStats) return paletteStats;
+      let minDiff = Infinity, maxDiff = -Infinity;
+      let minB = Infinity, maxB = -Infinity;
+
+      for (const groupName of COLOR_GROUP_KEYS) {
+        for (const hex of COLOR_GROUPS[groupName]) {
+          const { r, g, b } = hexToRgb(hex);
+          const diff = Math.abs(r - g);
+          if (diff < minDiff) minDiff = diff;
+          if (diff > maxDiff) maxDiff = diff;
+          if (b < minB) minB = b;
+          if (b > maxB) maxB = b;
+        }
+      }
+      if (!isFinite(minDiff)) minDiff = 0;
+      if (!isFinite(maxDiff) || maxDiff === minDiff) maxDiff = minDiff + 1;
+      if (!isFinite(minB)) minB = 0;
+      if (!isFinite(maxB) || maxB === minB) maxB = minB + 1;
+
+      paletteStats = { minDiff, maxDiff, minB, maxB };
+      return paletteStats;
+    }
+
+    function getExhaleAngleForColor(colorHex) {
+      const { minDiff, maxDiff, minB, maxB } = computePaletteStats();
+      const { r, g, b } = hexToRgb(colorHex);
+
+      const diff = Math.abs(r - g);
+      let diffNorm = (diff - minDiff) / (maxDiff - minDiff);
+      if (!isFinite(diffNorm)) diffNorm = 0.5;
+      diffNorm = Math.max(0, Math.min(1, diffNorm));
+      const d = Math.pow(diffNorm, 0.6);
+
+      let baseAngle;
+      if (r > g) baseAngle = 45 + d * 40;
+      else if (g > r) baseAngle = 45 - d * 40;
+      else baseAngle = 45;
+
+      let blueNorm = (b - minB) / (maxB - minB);
+      if (!isFinite(blueNorm)) blueNorm = 0.5;
+      blueNorm = Math.max(0, Math.min(1, blueNorm));
+      const deltaBlue = (blueNorm - 0.5) * 30;
+      let finalAngle = baseAngle + deltaBlue;
+      finalAngle = Math.max(5, Math.min(85, finalAngle));
+      return -finalAngle;
+    }
+
+    function shapesTouching(a, b) {
+      const r1 = Math.max(a.rx, a.ry);
+      const r2 = Math.max(b.rx, b.ry);
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dist2 = dx * dx + dy * dy;
+      const rs = r1 + r2;
+      return dist2 <= rs * rs;
+    }
+
+    function triggerExhaleNeighbors(source, baseVx, baseVy) {
+      const particles = getAllLiveParticles();
+      const visited = new Set();
+      const queue = [];
+
+      for (const q of particles) {
+        if (q === source) continue;
+        if (q.exhaleKicked) continue;
+        if (q.color !== source.color) continue;
+        if (shapesTouching(source, q)) {
+          queue.push(q);
+          visited.add(q);
+        }
+      }
+
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        cur.vx = baseVx + cur.n;
+        cur.vy = baseVy + cur.n;
+        cur.exhaleKicked = true;
+        cur.exhaleTimer = source.exhaleTimer;
+
+        for (const r of particles) {
+          if (r === source || r === cur) continue;
+          if (r.exhaleKicked) continue;
+          if (r.color !== source.color) continue;
+          if (visited.has(r)) continue;
+          if (shapesTouching(cur, r)) {
+            queue.push(r);
+            visited.add(r);
+          }
+        }
+      }
+    }
+
+    // ===== Particle creation =====
+    function createBaseParticle(x, y, rx, ry, opacity, n, color, colorGroup) {
+      let baseVy = randRange(-24, 12);
+      baseVy += -20; // upwards bias
+      const baseVx = randRange(-10, 10);
+
+      const signX = Math.random() < 0.5 ? -1 : 1;
+      const signY = Math.random() < 0.5 ? -1 : 1;
+      const inhaleOffsetX = signX * n;
+      const inhaleOffsetY = signY * n;
+
+      return {
+        x, y,
+        prevY: y,
+        rx, ry,
+        vx: 0, vy: 0,
+        baseVx, baseVy,
+        n,
+        opacity,
+        initialOpacity: opacity,
+        scoreValue: rx * ry * (opacity / 100),
+        color,
+        colorGroup,
+        inhaleOffsetX, inhaleOffsetY,
+        inhaleInitDelay: 0,
+        inhaleSlowDuration: 0,
+        inhalePhase: 0,
+        inhalePhaseTimer: 0,
+        leftDriftDuration: 0,
+        preInhaleVx: 0,
+        preInhaleVy: 0,
+        exhaleDelay: 0,
+        exhaleTimer: 0,
+        exhaleKicked: false,
+        spawnDelay: randRange(0, 5),
+        spawnTimer: 0,
+        started: false,
+        riseMode: false,
+        riseVx: 0,
+        riseVy: 0,
+        isAbsorbing: false,
+        dead: false,
+        inTunnel: false,
+        tunnelEntryX: 0,
+        tunnelDepth: 0,
+        kind: "oval"
+      };
+    }
+
+    function createOval() {
+      const rx = randInt(10, 60);
+      const ry = randInt(10, 60);
+      const opacity = randInt(10, 50);
+      // Spawn mostly in "game" region (to the right of panel)
+      const x = randRange(PANEL_WIDTH + 100, WIDTH - 100);
+      const y = randRange(200, 500);
+      const n = randInt(1, 3);
+      const { groupName, color } = pickGroupAndColor();
+      const oval = createBaseParticle(x, y, rx, ry, opacity, n, color, groupName);
+      oval.kind = "oval";
+      ovals.push(oval);
+      return oval;
+    }
+
+    function createCircle() {
+      const r = randRange(5, 15);
+      const rx = r, ry = r;
+      const opacity = randInt(10, 50);
+      const x = randRange(PANEL_WIDTH + rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+      const n = randInt(1, 3);
+      const { groupName, color } = pickGroupAndColor();
+      const circle = createBaseParticle(x, y, rx, ry, opacity, n, color, groupName);
+      circle.kind = "circle";
+      circles.push(circle);
+      return circle;
+    }
+
+    function createEgg() {
+      const width = randRange(30, 80);
+      const height = randRange(30, 60);
+      const rx = width / 2, ry = height / 2;
+      const opacity = randInt(10, 50);
+      const n = randInt(1, 3);
+      const { groupName, color } = pickGroupAndColor();
+      const x = randRange(PANEL_WIDTH + rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+      const egg = createBaseParticle(x, y, rx, ry, opacity, n, color, groupName);
+      egg.kind = "egg";
+      eggs.push(egg);
+      return egg;
+    }
+
+    function createTv() {
+      const width = randRange(30, 80);
+      const height = randRange(30, 60);
+      const rx = width / 2, ry = height / 2;
+      const opacity = randInt(10, 50);
+      const n = randInt(1, 3);
+      const { groupName, color } = pickGroupAndColor();
+      const x = randRange(PANEL_WIDTH + rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+      const tv = createBaseParticle(x, y, rx, ry, opacity, n, color, groupName);
+      tv.kind = "tv";
+      tvs.push(tv);
+      return tv;
+    }
+
+    function createRhombus() {
+      // Now: curved triangle / droplet-like form
+      const width = randRange(30, 80);
+      const height = randRange(30, 60);
+      const rx = width / 2, ry = height / 2;
+      const opacity = randInt(10, 50);
+      const n = randInt(1, 3);
+      const { groupName, color } = pickGroupAndColor();
+      const x = randRange(PANEL_WIDTH + rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+      const rh = createBaseParticle(x, y, rx, ry, opacity, n, color, groupName);
+      rh.kind = "rhombus"; // but visually a curved triangle
+      rhombi.push(rh);
+      return rh;
+    }
+
+    function getAllShapesArray() {
+      return [...ovals, ...circles, ...eggs, ...tvs, ...rhombi];
+    }
+
+    function spawnShape() {
+      const kindIndex = randInt(0, 4);
+      let p = null;
+      if (kindIndex === 0) p = createOval();
+      else if (kindIndex === 1) p = createCircle();
+      else if (kindIndex === 2) p = createEgg();
+      else if (kindIndex === 3) p = createTv();
+      else p = createRhombus();
+
+      if (!p) return;
+      let joinedCluster = false;
+
+      // 80% chance to join previous cluster
+      if (lastCreatedShape && Math.random() < 0.8) {
+        const prev = lastCreatedShape;
+        const offsetY = (prev.ry / 2 + 2 * prev.n);
+        const offsetX = (2 * prev.rx / 3 - prev.n);
+        const signX = Math.random() < 0.5 ? -1 : 1;
+        const signY = Math.random() < 0.5 ? -1 : 1;
+        p.x = prev.x + signX * offsetX;
+        p.y = prev.y + signY * offsetY;
+        p.baseVx = prev.baseVx;
+        p.baseVy = prev.baseVy;
+        p.spawnDelay = prev.spawnDelay;
+
+        const groupName = prev.colorGroup;
+        if (groupName && COLOR_GROUPS[groupName]) {
+          const palette = COLOR_GROUPS[groupName];
+          p.colorGroup = groupName;
+          p.color = palette[randInt(0, palette.length - 1)];
+        }
+        p.opacity = Math.max(1, p.opacity - 5);
+        p.initialOpacity = p.opacity;
+        p.scoreValue = p.rx * p.ry * (p.opacity / 100);
+        joinedCluster = true;
+      }
+
+      // If not joining previous, see if overlaps another cluster
+      if (!joinedCluster) {
+        const all = getAllShapesArray();
+        let target = null;
+        for (const s of all) {
+          if (s === p || s.dead) continue;
+          if (shapesTouching(p, s)) {
+            target = s;
+            break;
+          }
+        }
+        if (target) {
+          p.baseVx = target.baseVx;
+          p.baseVy = target.baseVy;
+          p.spawnDelay = target.spawnDelay;
+          const groupName = target.colorGroup;
+          if (groupName && COLOR_GROUPS[groupName]) {
+            const palette = COLOR_GROUPS[groupName];
+            p.colorGroup = groupName;
+            p.color = palette[randInt(0, palette.length - 1)];
+          }
+          p.opacity = Math.max(1, p.opacity - 5);
+          p.initialOpacity = p.opacity;
+          p.scoreValue = p.rx * p.ry * (p.opacity / 100);
+        }
+      }
+
+      p.x = Math.max(PANEL_WIDTH + p.rx, Math.min(WIDTH - p.rx, p.x));
+      p.y = Math.max(p.ry, Math.min(HEIGHT - p.ry, p.y));
+      lastCreatedShape = p;
+    }
+
+    function isInMouthZone(p) {
+      const left = p.x - p.rx;
+      const right = p.x + p.rx;
+      const top = p.y - p.ry;
+      const bottom = p.y + p.ry;
+      return (
+        right >= MOUTH_X &&
+        left <= MOUTH_X + MOUTH_W &&
+        bottom >= MOUTH_Y &&
+        top <= MOUTH_Y + ABSORB_H
+      );
+    }
+
+    function handleBounds(p) {
+      let hitEdge = false;
+      if (p.x - p.rx < 0) { p.x = p.rx; if (p.vx < 0) p.vx = -p.vx; hitEdge = true; }
+      else if (p.x + p.rx > WIDTH) { p.x = WIDTH - p.rx; if (p.vx > 0) p.vx = -p.vx; hitEdge = true; }
+      if (p.y - p.ry < 0) { p.y = p.ry; if (p.vy < 0) p.vy = -p.vy; hitEdge = true; }
+      if (p.y + p.ry > HEIGHT) { p.y = HEIGHT - p.ry; if (p.vy > 0) p.vy = -p.vy; hitEdge = true; }
+
+      if (hitEdge && Math.random() < 0.5) {
+        const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 1;
+        const angle = Math.atan2(p.vy, p.vx);
+        const deltaDeg = randRange(160, 200);
+        const deltaRad = deltaDeg * Math.PI / 180;
+        const newAngle = angle + deltaRad;
+        const newSpeed = speed * 0.5;
+        p.vx = Math.cos(newAngle) * newSpeed;
+        p.vy = Math.sin(newAngle) * newSpeed;
+      }
+    }
+
+    function markAbsorbed(p) {
+      if (p.dead) return;
+      p.dead = true;
+      if (p.isAbsorbing) {
+        p.isAbsorbing = false;
+        absorbingCount = Math.max(0, absorbingCount - 1);
+      }
+      totalAbsorbed++;
+      totalScore += p.scoreValue;
+      if (currentBreath > 0 && stage === "BREATHING") {
+        ensureBreathStats(currentBreath);
+        breathStats[currentBreath].absorbed++;
+        breathStats[currentBreath].score += p.scoreValue;
+      }
+    }
+
+    function logBreathStats(b) {
+      ensureBreathStats(b);
+      breathStats[b].aliveAfter =
+        ovals.filter(o => !o.dead).length +
+        circles.filter(c => !c.dead).length +
+        eggs.filter(e => !e.dead).length +
+        tvs.filter(t => !t.dead).length +
+        rhombi.filter(r => !r.dead).length;
+
+      const s = breathStats[b];
+      const line = document.createElement("div");
+      line.textContent =
+        `Breath ${b}: absorbed ${s.absorbed} shapes, score ${s.score.toFixed(1)}, alive after: ${s.aliveAfter}`;
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "log";
+      line.appendChild(tag);
+      logDiv.appendChild(line);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function getAllLiveParticles() {
+      return [
+        ...ovals.filter(o => !o.dead),
+        ...circles.filter(c => !c.dead),
+        ...eggs.filter(e => !e.dead),
+        ...tvs.filter(t => !t.dead),
+        ...rhombi.filter(r => !r.dead)
+      ];
+    }
+
+    function applyDirectionCopy() {
+      const particles = getAllLiveParticles();
+      if (particles.length < 2) return;
+      const picks = Math.min(10, particles.length);
+      for (let k = 0; k < picks; k++) {
+        const i = randInt(0, particles.length - 1);
+        const p = particles[i];
+        const neighbors = [];
+        for (let j = 0; j < particles.length; j++) {
+          if (j === i) continue;
+          const q = particles[j];
+          if (shapesTouching(p, q)) neighbors.push(q);
+        }
+        if (neighbors.length) {
+          const q = neighbors[randInt(0, neighbors.length - 1)];
+          p.vx = q.vx;
+          p.vy = q.vy;
+        }
+      }
+    }
+
+    function pickRandomParticles(particles, count) {
+      const res = [];
+      const used = new Set();
+      const max = Math.min(count, particles.length);
+      while (res.length < max) {
+        const idx = randInt(0, particles.length - 1);
+        if (!used.has(idx)) {
+          used.add(idx);
+          res.push(particles[idx]);
+        }
+      }
+      return res;
+    }
+
+    function applyGust(particles) {
+      if (!particles.length) return;
+      const vyUp = pickRandomParticles(particles, 10);
+      const vyDown = pickRandomParticles(particles, 10);
+      const vxRight = pickRandomParticles(particles, 10);
+      const vxLeft = pickRandomParticles(particles, 10);
+      vyUp.forEach(p => { p.vy -= 40; });
+      vyDown.forEach(p => { p.vy += 40; });
+      vxRight.forEach(p => { p.vx += 40; });
+      vxLeft.forEach(p => { p.vx -= 40; });
+    }
+
+    // ===== Breath phase management =====
+    function onEnterInhale() {
+      const particles = getAllLiveParticles();
+      absorbingCount = 0;
+      quotaSlowedThisBreath = false;
+      for (const p of particles) {
+        p.isAbsorbing = false;
+        p.inTunnel = false;
+        p.tunnelEntryX = 0;
+        p.tunnelDepth = 0;
+
+        p.preInhaleVx = p.vx;
+        p.preInhaleVy = p.vy;
+        const delayMs = (p.x / 10 - p.y / 20 + p.opacity) * p.n;
+        p.inhaleInitDelay = Math.max(0, delayMs / 1000);
+        const widthPx = p.rx * 2;
+        p.inhaleSlowDuration = Math.max(0, widthPx / 1000);
+        p.inhalePhase = 0;
+        p.inhalePhaseTimer = 0;
+        p.leftDriftDuration = Math.random() < 0.5 ? randRange(0.5, 1.0) : 0;
+      }
+    }
+
+    function onEnterHold() {
+      for (const p of getAllLiveParticles()) {
+        p.vx /= 10;
+        p.vy /= 10;
+      }
+    }
+
+    function onEnterExhale() {
+      const particles = getAllLiveParticles();
+      for (const p of particles) {
+        p.exhaleDelay = parseFloat((Math.random() * 2).toFixed(2));
+        p.exhaleTimer = 0;
+        p.exhaleKicked = false;
+      }
+    }
+
+    function updateBreathPhase(dt) {
+      phaseTime += dt;
+      if (breathPhase === "INHALE" && phaseTime >= INHALE_DURATION) {
+        breathPhase = "HOLD";
+        phaseTime = 0;
+        onEnterHold();
+      } else if (breathPhase === "HOLD" && phaseTime >= HOLD_DURATION) {
+        breathPhase = "EXHALE";
+        phaseTime = 0;
+        onEnterExhale();
+      } else if (breathPhase === "EXHALE" && phaseTime >= EXHALE_DURATION) {
+        logBreathStats(currentBreath);
+        if (currentBreath >= MAX_BREATHS) {
+          stage = "DONE";
+          breathing = false;
+          breathPhase = null;
+        } else {
+          currentBreath++;
+          breathPhase = "INHALE";
+          phaseTime = 0;
+          onEnterInhale();
+        }
+      }
+    }
+
+    // ===== Particle update per frame =====
+    function updateParticle(p, dt) {
+      if (stage !== "BREATHING") {
+        if (!p.started) {
+          p.spawnTimer += dt;
+          if (p.spawnTimer >= p.spawnDelay) {
+            p.started = true;
+            p.vx = p.baseVx;
+            p.vy = p.baseVy;
+          } else {
+            p.vx = 0;
+            p.vy = 0;
+          }
+        } else if (p.riseMode) {
+          p.vx = p.riseVx;
+          p.vy = p.riseVy;
+        }
+      } else {
+        if (breathPhase === "INHALE") {
+          p.inhalePhaseTimer += dt;
+          if (p.inhalePhase === 0) {
+            if (p.inhalePhaseTimer >= p.inhaleInitDelay) {
+              p.inhalePhase = 1;
+              p.inhalePhaseTimer = 0;
+            }
+          } else if (p.inhalePhase === 1) {
+            const dur = p.inhaleSlowDuration;
+            if (dur <= 0) {
+              p.vx = 0; p.vy = 0;
+              p.inhalePhase = (p.leftDriftDuration > 0 ? 2 : 3);
+              p.inhalePhaseTimer = 0;
+            } else {
+              const frac = Math.min(1, p.inhalePhaseTimer / dur);
+              const inv = 1 - frac;
+              p.vx = p.preInhaleVx * inv;
+              p.vy = p.preInhaleVy * inv;
+              if (frac >= 1) {
+                p.vx = 0; p.vy = 0;
+                p.inhalePhase = (p.leftDriftDuration > 0 ? 2 : 3);
+                p.inhalePhaseTimer = 0;
+              }
+            }
+          } else if (p.inhalePhase === 2) {
+            p.vx = -(220 + 50 * p.n);
+            p.vy = 3 * p.n;
+            if (p.inhalePhaseTimer >= p.leftDriftDuration) {
+              p.inhalePhase = 3;
+              p.inhalePhaseTimer = 0;
+            }
+          } else if (p.inhalePhase === 3) {
+            const targetX = MOUTH_X + MOUTH_W / 2;
+            const targetY = HEIGHT - p.ry * p.n;
+            const dx = targetX - p.x;
+            const dy = targetY - p.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const rawSpeed = 220 + 40 * p.n;
+            const speed = rawSpeed * 0.5;
+            const targetVx = (dx / dist) * speed + p.inhaleOffsetX;
+            const targetVy = (dy / dist) * speed + p.inhaleOffsetY;
+            const maxDelta = 250 * dt;
+            const dvx = targetVx - p.vx;
+            p.vx += Math.abs(dvx) > maxDelta ? Math.sign(dvx) * maxDelta : dvx;
+            const dvy = targetVy - p.vy;
+            p.vy += Math.abs(dvy) > maxDelta ? Math.sign(dvy) * maxDelta : dvy;
+          }
+
+          // Tunnel entry & slipstream during INHALE
+          if (isInMouthZone(p)) {
+            if (!p.inTunnel) {
+              p.inTunnel = true;
+              p.tunnelEntryX = p.x;
+              p.tunnelDepth = 0;
+            }
+          }
+          if (p.inTunnel) {
+            p.vx = -(40 + 15 * p.n);
+            p.vy *= 0.4;
+            const mouthRight = MOUTH_X + MOUTH_W;
+            const depthNow = Math.max(0, mouthRight - p.x);
+            if (depthNow > p.tunnelDepth) p.tunnelDepth = depthNow;
+          }
+
+        } else if (breathPhase === "HOLD") {
+          if (isInMouthZone(p) && !p.inTunnel) {
+            p.inTunnel = true;
+            p.tunnelEntryX = p.x;
+            p.tunnelDepth = 0;
+          }
+          if (p.inTunnel) {
+            p.vx = -(30 + 10 * p.n);
+            p.vy *= 0.4;
+            const mouthRight = MOUTH_X + MOUTH_W;
+            const depthNow = Math.max(0, mouthRight - p.x);
+            if (depthNow > p.tunnelDepth) p.tunnelDepth = depthNow;
+          }
+
+        } else if (breathPhase === "EXHALE") {
+          p.exhaleTimer += dt;
+
+          if (p.inTunnel) {
+            if (!p.exhaleKicked && p.exhaleTimer >= p.exhaleDelay) {
+              p.exhaleKicked = true;
+            }
+            if (p.exhaleKicked) {
+              p.vx = 80 + 25 * p.n;
+              p.vy *= 0.4;
+            }
+          } else {
+            if (!p.exhaleKicked && p.exhaleTimer >= p.exhaleDelay) {
+              const baseSpeed = 220;
+              const exhaleSpeedBase = baseSpeed + 50 * p.n;
+              let opacityNorm = (p.opacity - 10) / 40;
+              if (!isFinite(opacityNorm)) opacityNorm = 0.5;
+              opacityNorm = Math.max(0, Math.min(1, opacityNorm));
+              const speedFactor = 0.7 + (1 - opacityNorm) * 1.3;
+              const exhaleSpeed = exhaleSpeedBase * speedFactor * 0.5;
+              let angleDeg = getExhaleAngleForColor(p.color);
+              let mag = Math.abs(angleDeg);
+              mag += (1 - opacityNorm) * 20;
+              mag -= opacityNorm * 5;
+              mag = Math.max(5, Math.min(85, mag));
+              angleDeg = -mag;
+              const angle = angleDeg * Math.PI / 180;
+              const baseVx = Math.cos(angle) * exhaleSpeed;
+              const baseVy = Math.sin(angle) * exhaleSpeed;
+              p.vx = baseVx;
+              p.vy = baseVy;
+              p.exhaleKicked = true;
+              triggerExhaleNeighbors(p, baseVx, baseVy);
+            }
+          }
+
+          if (p.inTunnel && (p.x - p.rx >= MOUTH_X + MOUTH_W)) {
+            p.inTunnel = false;
+            p.tunnelDepth = 0;
+          }
+        }
+      }
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      handleBounds(p);
+
+      if (stage !== "BREATHING" && !p.riseMode) {
+        if (p.prevY <= 300 && p.y > 300 && Math.random() < 0.3) {
+          p.riseMode = true;
+          p.riseVx = randRange(-15, 15);
+          p.riseVy = -randRange(10, 30);
+        }
+        if (p.prevY >= 200 && p.y < 200 && Math.random() < 0.3) {
+          p.riseMode = true;
+          p.riseVx = randRange(-15, 15);
+          p.riseVy = -randRange(10, 30);
+        }
+      }
+
+      // Slow slightly over panel label zone
+      if (stage === "BREATHING") {
+        if (Math.abs(p.x - LABEL_BOX.cx) <= LABEL_BOX.halfW &&
+            Math.abs(p.y - LABEL_BOX.cy) <= LABEL_BOX.halfH) {
+          p.vx *= 0.9;
+          p.vy *= 0.9;
+        }
+      }
+
+      // Absorption only while in tunnel and deep enough, during inhale/hold
+      if (
+        stage === "BREATHING" &&
+        (breathPhase === "INHALE" || breathPhase === "HOLD")
+      ) {
+        if (p.inTunnel && p.tunnelDepth >= TUNNEL_DEPTH_THRESHOLD) {
+          if (!p.isAbsorbing && absorbingCount < absorbQuota) {
+            p.isAbsorbing = true;
+            absorbingCount++;
+            if (!quotaSlowedThisBreath && absorbingCount >= absorbQuota) {
+              quotaSlowedThisBreath = true;
+              const all = getAllLiveParticles();
+              for (const q of all) {
+                q.vx *= 0.8;
+                q.vy *= 0.8;
+              }
+            }
+          }
+          if (p.isAbsorbing) {
+            p.opacity -= DECAY_RATE * dt;
+          }
+        }
+      }
+
+      p.prevY = p.y;
+    }
+
+    function updateList(list, dt) {
+      const toRemove = [];
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i];
+        if (p.dead) {
+          toRemove.push(i);
+          continue;
+        }
+        updateParticle(p, dt);
+        if (p.opacity <= 0) {
+          markAbsorbed(p);
+          toRemove.push(i);
+        }
+      }
+      for (let j = toRemove.length - 1; j >= 0; j--) {
+        list.splice(toRemove[j], 1);
+      }
+    }
+
+    function update(dt) {
+      if (stage === "GEN") {
+        genElapsed += dt;
+        spawnAccumulator += dt;
+        while (spawnAccumulator >= SPAWN_INTERVAL && genElapsed <= GEN_DURATION) {
+          spawnAccumulator -= SPAWN_INTERVAL;
+          spawnShape();
+        }
+        if (genElapsed >= GEN_DURATION && stage === "GEN") {
+          stage = "IDLE";
+        }
+      }
+
+      if (stage === "BREATHING") {
+        updateBreathPhase(dt);
+      }
+
+      dirCopyAccumulator += dt;
+      if (dirCopyAccumulator >= 1) {
+        const times = Math.floor(dirCopyAccumulator);
+        for (let i = 0; i < times; i++) applyDirectionCopy();
+        dirCopyAccumulator -= times;
+      }
+
+      const liveParticles = getAllLiveParticles();
+      if (liveParticles.length >= 100) {
+        gustAccumulator += dt;
+        if (gustAccumulator >= 1) {
+          const times = Math.floor(gustAccumulator);
+          for (let i = 0; i < times; i++) applyGust(liveParticles);
+          gustAccumulator -= times;
+        }
+      } else {
+        gustAccumulator = 0;
+      }
+
+      updateList(ovals, dt);
+      updateList(circles, dt);
+      updateList(eggs, dt);
+      updateList(tvs, dt);
+      updateList(rhombi, dt);
+
+      updateStatus();
+    }
+
+    // ===== Drawing =====
+    function getPhaseLabelAndCountdown() {
+      if (stage !== "BREATHING" || !breathPhase) return null;
+      let label = breathPhase.charAt(0) + breathPhase.slice(1).toLowerCase();
+      let total = 0;
+      if (breathPhase === "INHALE") total = INHALE_DURATION;
+      else if (breathPhase === "HOLD") total = HOLD_DURATION;
+      else if (breathPhase === "EXHALE") total = EXHALE_DURATION;
+      const remaining = Math.max(0, total - phaseTime);
+      const countdown = Math.ceil(remaining);
+      return { label, countdown };
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+      // Deep phase backgrounds
+      let bgColor = "#020617";
+      if (stage === "BREATHING") {
+        if (breathPhase === "INHALE") bgColor = "#240008";   // deep dark red
+        else if (breathPhase === "HOLD") bgColor = "#17001f"; // deep violet
+        else if (breathPhase === "EXHALE") bgColor = "#001329"; // deep navy
+      }
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.filter = "none";
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.save();
+      ctx.shadowBlur = 18;
+      ctx.shadowColor = "rgba(255,255,255,0.7)";
+
+      // Left panel visual scaffold
+      ctx.fillStyle = "rgba(15,23,42,0.7)";
+      ctx.fillRect(0, 0, PANEL_WIDTH, HEIGHT);
+
+      // Vertical divider between panel and main play area
+      ctx.strokeStyle = "rgba(148,163,184,0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(PANEL_WIDTH, 0);
+      ctx.lineTo(PANEL_WIDTH, HEIGHT);
+      ctx.stroke();
+
+      // Tube: 256x100 in bottom-left, with 20px "mouth" visually at right edge of panel
+      const tubeX = TUBE_LEFT_X;
+      const tubeY = TUBE_Y;
+      const tubeW = TUBE_TOTAL_WIDTH;
+      const tubeH = TUBE_HEIGHT;
+
+      const tubeGrad = ctx.createLinearGradient(tubeX, tubeY, tubeX + tubeW, tubeY);
+      tubeGrad.addColorStop(0, "rgba(248,250,252,0.1)");
+      tubeGrad.addColorStop(0.8, "rgba(248,250,252,0.25)");
+      tubeGrad.addColorStop(1, "rgba(248,250,252,0.5)");
+
+      ctx.fillStyle = tubeGrad;
+      ctx.fillRect(tubeX, tubeY, tubeW, tubeH);
+
+      // Highlight the mouth (conceptual 20px inside "game")
+      ctx.fillStyle = "rgba(255,255,255,0.4)";
+      ctx.fillRect(MOUTH_X, MOUTH_Y, MOUTH_W, ABSORB_H);
+
+      ctx.strokeStyle = "rgba(148,163,184,0.9)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(tubeX, tubeY, tubeW, tubeH);
+
+      // Phase word + big countdown inside panel (bigger & faint)
+      const phaseInfo = getPhaseLabelAndCountdown();
+      if (phaseInfo) {
+        const { label, countdown } = phaseInfo;
+
+        // Countdown
+        ctx.font = "700 70px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255,255,255,0.18)";
+        ctx.fillText(String(countdown), LABEL_BOX.cx, LABEL_BOX.cy + 25);
+
+        // Phase label
+        ctx.font = "600 34px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.26)";
+        ctx.fillText(label, LABEL_BOX.cx, LABEL_BOX.cy - 35);
+      }
+
+      // Score HUD in panel (top-left)
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "rgba(248,250,252,0.85)";
+      ctx.font = "600 18px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+      ctx.fillText("Score", 16, 30);
+
+      ctx.font = "700 24px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+      ctx.fillText(totalScore.toFixed(1), 16, 60);
+
+      if (currentBreath > 0) {
+        ensureBreathStats(currentBreath);
+        const curScore = breathStats[currentBreath].score || 0;
+        ctx.font = "500 13px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+        ctx.fillStyle = "rgba(209,213,219,0.75)";
+        ctx.fillText(`Breath ${currentBreath} score: ${curScore.toFixed(1)}`, 16, 82);
+      }
+
+      // Shapes: screen blend + contrast/saturation for bright pops
+      ctx.globalCompositeOperation = "screen";
+      ctx.filter = "contrast(1.4) saturate(1.5)";
+
+      // Circles
+      for (const c of circles) {
+        if (c.dead) continue;
+        const rgb = hexToRgb(c.color);
+        const alpha = Math.max(0, Math.min(1, c.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.rx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Eggs
+      for (const e of eggs) {
+        if (e.dead) continue;
+        const rgb = hexToRgb(e.color);
+        const alpha = Math.max(0, Math.min(1, e.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y, e.rx, e.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // TVs (rounded rectangles)
+      for (const t of tvs) {
+        if (t.dead) continue;
+        const rgb = hexToRgb(t.color);
+        const alpha = Math.max(0, Math.min(1, t.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+
+        const x = t.x - t.rx;
+        const y = t.y - t.ry;
+        const w = t.rx * 2;
+        const h = t.ry * 2;
+        const r = Math.min(t.rx, t.ry) * 0.9;
+
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Curved triangles (replacing jagged rhombus)
+      for (const r of rhombi) {
+        if (r.dead) continue;
+        const rgb = hexToRgb(r.color);
+        const alpha = Math.max(0, Math.min(1, r.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+
+        const cx = r.x;
+        const cy = r.y;
+        const rx = r.rx;
+        const ry = r.ry;
+
+        const topX = cx;
+        const topY = cy - ry;
+        const leftX = cx - rx;
+        const leftY = cy + ry * 0.3;
+        const rightX = cx + rx;
+        const rightY = cy + ry * 0.3;
+
+        ctx.beginPath();
+        ctx.moveTo(topX, topY);
+        ctx.quadraticCurveTo(cx - rx * 0.6, cy - ry * 0.2, leftX, leftY);
+        ctx.quadraticCurveTo(cx, cy + ry * 1.0, rightX, rightY);
+        ctx.quadraticCurveTo(cx + rx * 0.6, cy - ry * 0.2, topX, topY);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Ovals
+      for (const o of ovals) {
+        if (o.dead) continue;
+        const rgb = hexToRgb(o.color);
+        const alpha = Math.max(0, Math.min(1, o.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+        ctx.beginPath();
+        ctx.ellipse(o.x, o.y, o.rx, o.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+      ctx.filter = "none";
+    }
+
+    // ===== Status & loop =====
+    function updateStatus() {
+      const aliveOvals = ovals.filter(o => !o.dead).length;
+      const aliveCircles = circles.filter(c => !c.dead).length;
+      const aliveEggs = eggs.filter(e => !e.dead).length;
+      const aliveTvs = tvs.filter(t => !t.dead).length;
+      const aliveRhombi = rhombi.filter(r => !r.dead).length;
+      const aliveTotal = aliveOvals + aliveCircles + aliveEggs + aliveTvs + aliveRhombi;
+
+      let text = `Stage: ${stage}`;
+      if (stage === "BREATHING") {
+        text += ` | Breath: ${currentBreath}/${MAX_BREATHS}`;
+        if (breathPhase) text += ` (${breathPhase})`;
+        text += ` | Phase time: ${phaseTime.toFixed(1)}s`;
+      } else if (stage === "GEN") {
+        text += ` | Generating: ${genElapsed.toFixed(1)}/${GEN_DURATION}s`;
+      }
+
+      text += ` | Alive shapes: ${aliveTotal}` +
+              ` (ovals ${aliveOvals}, circles ${aliveCircles}, eggs ${aliveEggs}, tvs ${aliveTvs}, curved ${aliveRhombi})`;
+      text += ` | Absorbing: ${absorbingCount}/${absorbQuota}`;
+      text += ` | Total absorbed: ${totalAbsorbed}`;
+      text += ` | Total score: ${totalScore.toFixed(1)}`;
+
+      statusDiv.textContent = text;
+
+      if (stage === "GEN") {
+        const remaining = Math.max(0, GEN_DURATION - genElapsed);
+        genInfoSpan.textContent = `Generation: ${remaining.toFixed(1)}s left`;
+      } else if (stage === "IDLE") {
+        genInfoSpan.textContent = "Generation complete. Click “Start Breathing” to begin.";
+      } else {
+        genInfoSpan.textContent = "";
+      }
+    }
+
+    function loop(timestamp) {
+      if (lastTime === null) lastTime = timestamp;
+      const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+      lastTime = timestamp;
+      simTime += dt;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function resetSimulation() {
+      ovals = [];
+      circles = [];
+      eggs = [];
+      tvs = [];
+      rhombi = [];
+      simTime = 0;
+      lastTime = null;
+
+      stage = "GEN";
+      genElapsed = 0;
+      spawnAccumulator = 0;
+
+      absorbingCount = 0;
+      quotaSlowedThisBreath = false;
+      breathing = false;
+      breathPhase = null;
+      phaseTime = 0;
+      currentBreath = 0;
+
+      totalScore = 0;
+      totalAbsorbed = 0;
+      breathStats = {};
+
+      dirCopyAccumulator = 0;
+      gustAccumulator = 0;
+      lastCreatedShape = null;
+
+      logDiv.innerHTML = "";
+      statusDiv.textContent = "";
+      genInfoSpan.textContent = "Generation starting… 20 seconds of shapes.";
+
+      startButton.disabled = false;
+    }
+
+    function onStartBreathing() {
+      if (stage !== "GEN" && stage !== "IDLE") return;
+      const q = parseInt(quotaInput.value, 10);
+      absorbQuota = isNaN(q) ? 90 : Math.max(1, Math.min(400, q));
+      stage = "BREATHING";
+      breathing = true;
+      breathPhase = "INHALE";
+      phaseTime = 0;
+      currentBreath = 1;
+      onEnterInhale();
+    }
+
+    function init() {
+      canvas = document.getElementById("simCanvas");
+      ctx = canvas.getContext("2d");
+      statusDiv = document.getElementById("status");
+      logDiv = document.getElementById("log");
+      quotaInput = document.getElementById("quotaInput");
+      startButton = document.getElementById("startButton");
+      restartButton = document.getElementById("restartButton");
+      genInfoSpan = document.getElementById("genInfo");
+
+      startButton.addEventListener("click", onStartBreathing);
+      restartButton.addEventListener("click", resetSimulation);
+
+      resetSimulation();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("load", init);
+  </script>
+</body>
+</html>
+

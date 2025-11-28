@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Breath Absorb Quota Test v12</title>
+  <style>
+    body {
+      background: #111827;
+      color: #f9fafb;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    label {
+      font-size: 14px;
+    }
+    input[type="number"] {
+      background: #111827;
+      color: #f9fafb;
+      border: 1px solid #4b5563;
+      border-radius: 4px;
+      padding: 4px 8px;
+      width: 80px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    #status {
+      font-size: 12px;
+      margin-bottom: 8px;
+      max-width: 1000px;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #simContainer {
+      border: 2px solid #6b7280;
+      width: 1000px;
+      height: 600px;
+      position: relative;
+      margin-bottom: 8px;
+      background: #000;
+    }
+    #simCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      filter: blur(4px);
+    }
+    #log {
+      font-size: 13px;
+      max-width: 1000px;
+      align-self: stretch;
+      background: #020617;
+      border-radius: 4px;
+      padding: 8px;
+      border: 1px solid #1f2937;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    #log div {
+      margin-bottom: 2px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      margin-left: 4px;
+      background: #1f2937;
+    }
+  </style>
+</head>
+<body>
+  <h1>Breath Absorb Quota Test (1000×600)</h1>
+
+  <div id="controls">
+    <label>
+      Absorb quota:
+      <input id="quotaInput" type="number" min="1" max="400" value="90">
+    </label>
+    <button id="startButton">Start Breathing</button>
+    <button id="restartButton">Restart</button>
+    <span id="genInfo" style="font-size:12px; opacity:0.8;"></span>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="simContainer">
+    <canvas id="simCanvas" width="1000" height="600"></canvas>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    // ===== Constants =====
+    const WIDTH = 1000;
+    const HEIGHT = 600;
+
+    const GEN_DURATION = 20; // seconds
+    const SPAWN_INTERVAL = 0.02; // every 0.02s => ~1000 shapes
+
+    const DECAY_RATE = 6; // opacity per second while absorbing & in zone
+
+    const INHALE_DURATION = 4; // seconds
+    const HOLD_DURATION = 2;   // seconds
+    const EXHALE_DURATION = 4; // seconds
+    const MAX_BREATHS = 6;
+
+    const ABSORB_W = 20;  // px
+    const ABSORB_H = 100; // px
+    const ABSORB_X = ABSORB_W / 2;
+    const ABSORB_Y = HEIGHT - ABSORB_H / 2;
+
+    // Extended palette (all shapes pick from this)
+    const SHAPE_COLORS = [
+      "#ffffff", "#fefef1",
+      "#f7fafb", "#fffff9",
+      "#ebeff1", "#fdfffc",
+      "#f9feff", "#fcfcff",
+      "#ecf7fd", "#fef9ff",
+      "#CDF0EA", "#F9F5F6", "#F4EEFF", "#D2DAFF", "#EEF1FF",
+      "#FFFFD2", "#FFF2C6", "#E0F4FF", "#FCFFBF", "#F5E9FF",
+      "#FFF8E6", "#EDFFF0", "#EBFFD8", "#F4CCE9", "#F5EFFF",
+      "#EBD3F8", "#E3DFFD", "#FFEE91"
+    ];
+
+    // ===== State =====
+    let canvas, ctx;
+    let statusDiv, logDiv, quotaInput, startButton, restartButton, genInfoSpan;
+
+    let ovals = [];
+    let circles = [];
+    let eggs = [];
+    let tvs = [];
+    let rhombi = [];
+
+    let simTime = 0;
+    let lastTime = null;
+
+    let stage = "GEN"; // "GEN", "IDLE", "BREATHING", "DONE"
+    let genElapsed = 0;
+    let spawnAccumulator = 0;
+
+    let absorbQuota = 90;
+    let absorbingCount = 0;
+
+    let breathing = false;
+    let breathPhase = null; // "INHALE", "HOLD", "EXHALE"
+    let phaseTime = 0;
+    let currentBreath = 0;
+
+    let totalScore = 0;
+    let totalAbsorbed = 0;
+    let breathStats = {}; // breath index -> {breath, absorbed, score, aliveAfter}
+
+    let dirCopyAccumulator = 0;
+    let gustAccumulator = 0;
+
+    let lastCreatedShape = null; // for cluster logic
+
+    // ===== Utility =====
+    function randRange(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function hexToRgb(hex) {
+      hex = hex.replace("#", "");
+      if (hex.length === 3) {
+        hex = hex.split("").map(c => c + c).join("");
+      }
+      const num = parseInt(hex, 16);
+      return {
+        r: (num >> 16) & 255,
+        g: (num >> 8) & 255,
+        b: num & 255
+      };
+    }
+
+    function ensureBreathStats(b) {
+      if (!breathStats[b]) {
+        breathStats[b] = { breath: b, absorbed: 0, score: 0, aliveAfter: 0 };
+      }
+    }
+
+    function pickShapeColor() {
+      return SHAPE_COLORS[randInt(0, SHAPE_COLORS.length - 1)];
+    }
+
+    // ===== Particle creation =====
+    function createBaseParticle(x, y, rx, ry, opacity, n, color) {
+      let baseVy = randRange(-24, 12);
+      baseVy += -20; // upwards bias
+      const baseVx = randRange(-10, 10);
+
+      const signX = Math.random() < 0.5 ? -1 : 1;
+      const signY = Math.random() < 0.5 ? -1 : 1;
+      const inhaleOffsetX = signX * n;
+      const inhaleOffsetY = signY * n;
+
+      return {
+        x, y,
+        prevY: y,
+        rx, ry,
+        vx: 0, vy: 0,
+        baseVx, baseVy,
+        n,
+        opacity,
+        initialOpacity: opacity,
+        scoreValue: rx * ry * (opacity / 100),
+        color,
+        inhaleOffsetX, inhaleOffsetY,
+        inhaleDelay: 0,
+        inhaleTimer: 0,
+        inhaleEngaged: false,
+        exhaleDelay: 0,
+        exhaleTimer: 0,
+        exhaleKicked: false,
+        spawnDelay: randRange(0, 5),
+        spawnTimer: 0,
+        started: false,
+        riseMode: false,
+        riseVx: 0,
+        riseVy: 0,
+        isAbsorbing: false,
+        dead: false,
+        kind: "oval"
+      };
+    }
+
+    function createOval() {
+      const rx = randInt(10, 60);
+      const ry = randInt(10, 60);
+      const opacity = randInt(10, 50); // 10–50
+      const x = randRange(100, 900);
+      const y = randRange(200, 500);
+      const n = randInt(1, 3);
+      const color = pickShapeColor();
+
+      const oval = createBaseParticle(x, y, rx, ry, opacity, n, color);
+      oval.kind = "oval";
+      ovals.push(oval);
+      return oval;
+    }
+
+    function createCircle() {
+      const r = randRange(5, 15);
+      const rx = r;
+      const ry = r;
+      const opacity = randInt(10, 50); // 10–50
+      const x = randRange(rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+      const n = randInt(1, 3);
+      const color = pickShapeColor();
+
+      const circle = createBaseParticle(x, y, rx, ry, opacity, n, color);
+      circle.kind = "circle";
+      circles.push(circle);
+      return circle;
+    }
+
+    function createEgg() {
+      // Bigger egg: width 30–80, height 30–60
+      const width = randRange(30, 80);
+      const height = randRange(30, 60);
+      const rx = width / 2;
+      const ry = height / 2;
+
+      const opacity = randInt(10, 50); // 10–50
+      const n = randInt(1, 3);
+      const color = pickShapeColor();
+
+      const x = randRange(rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+
+      const egg = createBaseParticle(x, y, rx, ry, opacity, n, color);
+      egg.kind = "egg";
+      eggs.push(egg);
+      return egg;
+    }
+
+    function createTv() {
+      // Bigger TV: width 30–80, height 30–60
+      const width = randRange(30, 80);
+      const height = randRange(30, 60);
+      const rx = width / 2;
+      const ry = height / 2;
+
+      const opacity = randInt(10, 50); // 10–50
+      const n = randInt(1, 3);
+      const color = pickShapeColor();
+
+      const x = randRange(rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+
+      const tv = createBaseParticle(x, y, rx, ry, opacity, n, color);
+      tv.kind = "tv";
+      tvs.push(tv);
+      return tv;
+    }
+
+    function createRhombus() {
+      // Bigger rhombus: width 30–80, height 30–60
+      const width = randRange(30, 80);
+      const height = randRange(30, 60);
+      const rx = width / 2;
+      const ry = height / 2;
+
+      const opacity = randInt(10, 50); // 10–50
+      const n = randInt(1, 3);
+      const color = pickShapeColor();
+
+      const x = randRange(rx, WIDTH - rx);
+      const y = randRange(ry, HEIGHT / 2 - ry);
+
+      const rh = createBaseParticle(x, y, rx, ry, opacity, n, color);
+      rh.kind = "rhombus";
+      rhombi.push(rh);
+      return rh;
+    }
+
+    // Spawn one random shape (oval/circle/egg/tv/rhombus) and maybe cluster it
+    function spawnShape() {
+      const kindIndex = randInt(0, 4); // 0 oval, 1 circle, 2 egg, 3 tv, 4 rhombus
+      let p = null;
+      if (kindIndex === 0) p = createOval();
+      else if (kindIndex === 1) p = createCircle();
+      else if (kindIndex === 2) p = createEgg();
+      else if (kindIndex === 3) p = createTv();
+      else p = createRhombus();
+
+      if (!p) return;
+
+      // 80% chance to cluster with last-created shape
+      if (lastCreatedShape && Math.random() < 0.8) {
+        const prev = lastCreatedShape;
+        const offsetY = (prev.ry / 2 + 2 * prev.n);
+        const offsetX = (2 * prev.rx / 3 - prev.n);
+        const signX = Math.random() < 0.5 ? -1 : 1;
+        const signY = Math.random() < 0.5 ? -1 : 1;
+
+        p.x = prev.x + signX * offsetX;
+        p.y = prev.y + signY * offsetY;
+
+        // copy base velocity + wait time
+        p.baseVx = prev.baseVx;
+        p.baseVy = prev.baseVy;
+        p.spawnDelay = prev.spawnDelay;
+
+        // opacity -5 for cluster member (not a new cluster head)
+        p.opacity = Math.max(1, p.opacity - 5);
+        p.initialOpacity = p.opacity;
+        p.scoreValue = p.rx * p.ry * (p.opacity / 100);
+      }
+
+      // clamp to container
+      p.x = Math.max(p.rx, Math.min(WIDTH - p.rx, p.x));
+      p.y = Math.max(p.ry, Math.min(HEIGHT - p.ry, p.y));
+
+      lastCreatedShape = p;
+    }
+
+    // ===== Absorb zone geometry =====
+    function isInAbsorbZone(p) {
+      const left = p.x - p.rx;
+      const right = p.x + p.rx;
+      const top = p.y - p.ry;
+      const bottom = p.y + p.ry;
+
+      return (
+        right >= 0 &&
+        left <= ABSORB_W &&
+        bottom >= HEIGHT - ABSORB_H &&
+        top <= HEIGHT
+      );
+    }
+
+    // ===== Edge handling =====
+    function handleBounds(p) {
+      let hitEdge = false;
+
+      if (p.x - p.rx < 0) {
+        p.x = p.rx;
+        if (p.vx < 0) p.vx = -p.vx;
+        hitEdge = true;
+      } else if (p.x + p.rx > WIDTH) {
+        p.x = WIDTH - p.rx;
+        if (p.vx > 0) p.vx = -p.vx;
+        hitEdge = true;
+      }
+
+      if (p.y - p.ry < 0) {
+        p.y = p.ry;
+        if (p.vy < 0) p.vy = -p.vy;
+        hitEdge = true;
+      }
+
+      if (p.y + p.ry > HEIGHT) {
+        p.y = HEIGHT - p.ry;
+        if (p.vy > 0) p.vy = -p.vy;
+        hitEdge = true;
+      }
+
+      if (hitEdge) {
+        // slight fade on edge contact
+        p.opacity -= 1;
+        if (p.opacity < 0) p.opacity = 0;
+
+        if (Math.random() < 0.5) {
+          const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 1;
+          const angle = Math.atan2(p.vy, p.vx);
+          const deltaDeg = randRange(160, 200);
+          const deltaRad = deltaDeg * Math.PI / 180;
+          const newAngle = angle + deltaRad;
+          const newSpeed = speed * 0.5;
+          p.vx = Math.cos(newAngle) * newSpeed;
+          p.vy = Math.sin(newAngle) * newSpeed;
+        }
+      }
+    }
+
+    // ===== Absorption bookkeeping (all shapes) =====
+    function markAbsorbed(p) {
+      if (p.dead) return;
+      p.dead = true;
+      if (p.isAbsorbing) {
+        p.isAbsorbing = false;
+        absorbingCount = Math.max(0, absorbingCount - 1);
+      }
+      totalAbsorbed++;
+      totalScore += p.scoreValue;
+
+      if (currentBreath > 0 && stage === "BREATHING") {
+        ensureBreathStats(currentBreath);
+        breathStats[currentBreath].absorbed++;
+        breathStats[currentBreath].score += p.scoreValue;
+      }
+    }
+
+    function logBreathStats(b) {
+      ensureBreathStats(b);
+      breathStats[b].aliveAfter =
+        ovals.filter(o => !o.dead).length +
+        circles.filter(c => !c.dead).length +
+        eggs.filter(e => !e.dead).length +
+        tvs.filter(t => !t.dead).length +
+        rhombi.filter(r => !r.dead).length;
+
+      const s = breathStats[b];
+
+      const line = document.createElement("div");
+      line.textContent =
+        `Breath ${b}: absorbed ${s.absorbed} shapes, ` +
+        `score ${s.score.toFixed(1)}, ` +
+        `alive after: ${s.aliveAfter}`;
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "log";
+      line.appendChild(tag);
+
+      logDiv.appendChild(line);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    // ===== Direction copy (every second, all shapes, 10 picks) =====
+    function getAllLiveParticles() {
+      return [
+        ...ovals.filter(o => !o.dead),
+        ...circles.filter(c => !c.dead),
+        ...eggs.filter(e => !e.dead),
+        ...tvs.filter(t => !t.dead),
+        ...rhombi.filter(r => !r.dead),
+      ];
+    }
+
+    function applyDirectionCopy() {
+      const particles = getAllLiveParticles();
+      if (particles.length < 2) return;
+
+      const picks = Math.min(10, particles.length);
+      for (let k = 0; k < picks; k++) {
+        const i = randInt(0, particles.length - 1);
+        const p = particles[i];
+
+        const neighbors = [];
+        for (let j = 0; j < particles.length; j++) {
+          if (j === i) continue;
+          const q = particles[j];
+          const r1 = Math.max(p.rx, p.ry);
+          const r2 = Math.max(q.rx, q.ry);
+          const dx = p.x - q.x;
+          const dy = p.y - q.y;
+          const dist2 = dx * dx + dy * dy;
+          const rs = r1 + r2;
+          if (dist2 <= rs * rs) {
+            neighbors.push(q);
+          }
+        }
+
+        if (neighbors.length) {
+          const q = neighbors[randInt(0, neighbors.length - 1)];
+          p.vx = q.vx;
+          p.vy = q.vy;
+        }
+      }
+    }
+
+    // ===== Gust logic (every second if 100+ shapes, doubled counts) =====
+    function pickRandomParticles(particles, count) {
+      const res = [];
+      const used = new Set();
+      const max = Math.min(count, particles.length);
+      while (res.length < max) {
+        const idx = randInt(0, particles.length - 1);
+        if (!used.has(idx)) {
+          used.add(idx);
+          res.push(particles[idx]);
+        }
+      }
+      return res;
+    }
+
+    function applyGust(particles) {
+      if (particles.length === 0) return;
+
+      const vyUp = pickRandomParticles(particles, 10);
+      const vyDown = pickRandomParticles(particles, 10);
+      const vxRight = pickRandomParticles(particles, 10);
+      const vxLeft = pickRandomParticles(particles, 10);
+
+      vyUp.forEach(p => { p.vy -= 40; });
+      vyDown.forEach(p => { p.vy += 40; });
+      vxRight.forEach(p => { p.vx += 40; });
+      vxLeft.forEach(p => { p.vx -= 40; });
+    }
+
+    // ===== Breath phase management =====
+    function onEnterInhale() {
+      const particles = getAllLiveParticles();
+      for (const p of particles) {
+        p.inhaleDelay = Math.random(); // 0–1s per shape
+        p.inhaleTimer = 0;
+        p.inhaleEngaged = false;
+      }
+    }
+
+    function onEnterHold() {
+      for (const p of getAllLiveParticles()) {
+        p.vx /= 10;
+        p.vy /= 10;
+      }
+    }
+
+    function onEnterExhale() {
+      for (const p of getAllLiveParticles()) {
+        p.exhaleDelay = parseFloat((Math.random() * 2).toFixed(2));
+        p.exhaleTimer = 0;
+        p.exhaleKicked = false;
+      }
+    }
+
+    function updateBreathPhase(dt) {
+      phaseTime += dt;
+
+      if (breathPhase === "INHALE" && phaseTime >= INHALE_DURATION) {
+        breathPhase = "HOLD";
+        phaseTime = 0;
+        onEnterHold();
+      } else if (breathPhase === "HOLD" && phaseTime >= HOLD_DURATION) {
+        breathPhase = "EXHALE";
+        phaseTime = 0;
+        onEnterExhale();
+      } else if (breathPhase === "EXHALE" && phaseTime >= EXHALE_DURATION) {
+        logBreathStats(currentBreath);
+        if (currentBreath >= MAX_BREATHS) {
+          stage = "DONE";
+          breathing = false;
+          breathPhase = null;
+        } else {
+          currentBreath++;
+          breathPhase = "INHALE";
+          phaseTime = 0;
+          onEnterInhale();
+        }
+      }
+    }
+
+    // ===== Particle update per frame =====
+    function updateParticle(p, dt) {
+      if (stage !== "BREATHING") {
+        if (!p.started) {
+          p.spawnTimer += dt;
+          if (p.spawnTimer >= p.spawnDelay) {
+            p.started = true;
+            p.vx = p.baseVx;
+            p.vy = p.baseVy;
+          } else {
+            p.vx = 0;
+            p.vy = 0;
+          }
+        } else if (p.riseMode) {
+          p.vx = p.riseVx;
+          p.vy = p.riseVy;
+        }
+      } else {
+        if (breathPhase === "INHALE") {
+          p.inhaleTimer += dt;
+          if (!p.inhaleEngaged && p.inhaleTimer >= p.inhaleDelay) {
+            p.inhaleEngaged = true;
+          }
+
+          if (p.inhaleEngaged) {
+            const dx = ABSORB_X - p.x;
+            const dy = ABSORB_Y - p.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const baseSpeed = 220;
+            const speed = baseSpeed + 40 * p.n;
+
+            const targetVx = (dx / dist) * speed + p.inhaleOffsetX;
+            const targetVy = (dy / dist) * speed + p.inhaleOffsetY;
+
+            const maxDelta = 250 * dt; // 25 per 0.1s
+
+            const dvx = targetVx - p.vx;
+            if (Math.abs(dvx) > maxDelta) {
+              p.vx += Math.sign(dvx) * maxDelta;
+            } else {
+              p.vx = targetVx;
+            }
+
+            const dvy = targetVy - p.vy;
+            if (Math.abs(dvy) > maxDelta) {
+              p.vy += Math.sign(dvy) * maxDelta;
+            } else {
+              p.vy = targetVy;
+            }
+          }
+        } else if (breathPhase === "HOLD") {
+          // already slowed
+        } else if (breathPhase === "EXHALE") {
+          p.exhaleTimer += dt;
+          if (!p.exhaleKicked && p.exhaleTimer >= p.exhaleDelay) {
+            const baseSpeed = 220;
+            const exhaleSpeed = baseSpeed + 50 * p.n;
+            const minAngle = -80 * Math.PI / 180;
+            const maxAngle = -10 * Math.PI / 180;
+            const angle = randRange(minAngle, maxAngle);
+            p.vx = Math.cos(angle) * exhaleSpeed;
+            p.vy = Math.sin(angle) * exhaleSpeed;
+            p.exhaleKicked = true;
+          }
+        }
+      }
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      handleBounds(p);
+
+      if (stage !== "BREATHING" && !p.riseMode) {
+        if (p.prevY <= 300 && p.y > 300 && Math.random() < 0.3) {
+          p.riseMode = true;
+          p.riseVx = randRange(-15, 15);
+          p.riseVy = -randRange(10, 30);
+        }
+        if (p.prevY >= 200 && p.y < 200 && Math.random() < 0.3) {
+          p.riseMode = true;
+          p.riseVx = randRange(-15, 15);
+          p.riseVy = -randRange(10, 30);
+        }
+      }
+
+      if (
+        stage === "BREATHING" &&
+        (breathPhase === "INHALE" || breathPhase === "HOLD")
+      ) {
+        const inZone = isInAbsorbZone(p);
+        if (inZone) {
+          if (!p.isAbsorbing && absorbingCount < absorbQuota) {
+            p.isAbsorbing = true;
+            absorbingCount++;
+          }
+          if (p.isAbsorbing) {
+            p.opacity -= DECAY_RATE * dt;
+          }
+        }
+      }
+
+      p.prevY = p.y;
+    }
+
+    function updateList(list, dt) {
+      const toRemove = [];
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i];
+        if (p.dead) {
+          toRemove.push(i);
+          continue;
+        }
+        updateParticle(p, dt);
+        if (p.opacity <= 0) {
+          markAbsorbed(p);
+          toRemove.push(i);
+        }
+      }
+      if (toRemove.length) {
+        for (let j = toRemove.length - 1; j >= 0; j--) {
+          list.splice(toRemove[j], 1);
+        }
+      }
+    }
+
+    // ===== Main update =====
+    function update(dt) {
+      // Generation phase (20 seconds, 1 spawn per 0.02s)
+      if (stage === "GEN") {
+        genElapsed += dt;
+        spawnAccumulator += dt;
+
+        while (spawnAccumulator >= SPAWN_INTERVAL && genElapsed <= GEN_DURATION) {
+          spawnAccumulator -= SPAWN_INTERVAL;
+          spawnShape();
+        }
+
+        if (genElapsed >= GEN_DURATION && stage === "GEN") {
+          stage = "IDLE";
+        }
+      }
+
+      if (stage === "BREATHING") {
+        updateBreathPhase(dt);
+      }
+
+      // Direction copy every second
+      dirCopyAccumulator += dt;
+      if (dirCopyAccumulator >= 1) {
+        const times = Math.floor(dirCopyAccumulator);
+        for (let i = 0; i < times; i++) {
+          applyDirectionCopy();
+        }
+        dirCopyAccumulator -= times;
+      }
+
+      // Gusts every second if >= 100 live shapes
+      const liveParticles = getAllLiveParticles();
+      if (liveParticles.length >= 100) {
+        gustAccumulator += dt;
+        if (gustAccumulator >= 1) {
+          const times = Math.floor(gustAccumulator);
+          for (let i = 0; i < times; i++) {
+            applyGust(liveParticles);
+          }
+          gustAccumulator -= times;
+        }
+      } else {
+        gustAccumulator = 0;
+      }
+
+      updateList(ovals, dt);
+      updateList(circles, dt);
+      updateList(eggs, dt);
+      updateList(tvs, dt);
+      updateList(rhombi, dt);
+
+      updateStatus();
+    }
+
+    // ===== Draw =====
+    function draw() {
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+      // Dark background
+      ctx.fillStyle = "#020617";
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Phase overlay (sky blue, purple, pink)
+      if (stage === "BREATHING") {
+        let overlayColor = null;
+        if (breathPhase === "INHALE") {
+          overlayColor = "rgba(56,189,248,0.25)";
+        } else if (breathPhase === "HOLD") {
+          overlayColor = "rgba(192,132,252,0.25)";
+        } else if (breathPhase === "EXHALE") {
+          overlayColor = "rgba(244,114,182,0.25)";
+        }
+        if (overlayColor) {
+          ctx.fillStyle = overlayColor;
+          ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        }
+      }
+
+      const showZone =
+        stage === "BREATHING" &&
+        (breathPhase === "INHALE" || breathPhase === "HOLD");
+
+      ctx.save();
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = "rgba(255,255,255,0.6)";
+
+      if (showZone) {
+        const zoneX = 0;
+        const zoneY = HEIGHT - ABSORB_H;
+
+        const grad = ctx.createLinearGradient(zoneX, zoneY, zoneX + ABSORB_W, zoneY);
+        grad.addColorStop(0, "rgba(255,255,255,0.9)");
+        grad.addColorStop(1, "rgba(255,255,255,0.0)");
+
+        ctx.fillStyle = grad;
+        ctx.fillRect(zoneX, zoneY, ABSORB_W, ABSORB_H);
+
+        ctx.strokeStyle = "rgba(148,163,184,0.7)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(zoneX, zoneY, ABSORB_W, ABSORB_H);
+      }
+
+      // Circles
+      for (const c of circles) {
+        if (c.dead) continue;
+        const rgb = hexToRgb(c.color);
+        const alpha = Math.max(0, Math.min(1, c.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.rx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Eggs
+      for (const e of eggs) {
+        if (e.dead) continue;
+        const rgb = hexToRgb(e.color);
+        const alpha = Math.max(0, Math.min(1, e.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y, e.rx, e.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // TVs (more rounded)
+      for (const t of tvs) {
+        if (t.dead) continue;
+        const rgb = hexToRgb(t.color);
+        const alpha = Math.max(0, Math.min(1, t.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+
+        const x = t.x - t.rx;
+        const y = t.y - t.ry;
+        const w = t.rx * 2;
+        const h = t.ry * 2;
+        const r = Math.min(t.rx, t.ry) * 0.9;
+
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Rhombi (very rounded diamond)
+      for (const r of rhombi) {
+        if (r.dead) continue;
+        const rgb = hexToRgb(r.color);
+        const alpha = Math.max(0, Math.min(1, r.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+
+        const cx = r.x;
+        const cy = r.y;
+        const rx = r.rx;
+        const ry = r.ry;
+        const cr = Math.min(rx, ry) * 0.8;
+
+        ctx.beginPath();
+        // top
+        ctx.moveTo(cx, cy - ry + cr);
+        ctx.quadraticCurveTo(cx, cy - ry, cx + cr, cy - ry + cr);
+        // right
+        ctx.lineTo(cx + rx - cr, cy - cr);
+        ctx.quadraticCurveTo(cx + rx, cy, cx + rx - cr, cy + cr);
+        // bottom
+        ctx.lineTo(cx + cr, cy + ry - cr);
+        ctx.quadraticCurveTo(cx, cy + ry, cx - cr, cy + ry - cr);
+        // left
+        ctx.lineTo(cx - rx + cr, cy + cr);
+        ctx.quadraticCurveTo(cx - rx, cy, cx - rx + cr, cy - cr);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Ovals
+      for (const o of ovals) {
+        if (o.dead) continue;
+        const rgb = hexToRgb(o.color);
+        const alpha = Math.max(0, Math.min(1, o.opacity / 100));
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+        ctx.beginPath();
+        ctx.ellipse(o.x, o.y, o.rx, o.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    function updateStatus() {
+      const aliveOvals = ovals.filter(o => !o.dead).length;
+      const aliveCircles = circles.filter(c => !c.dead).length;
+      const aliveEggs = eggs.filter(e => !e.dead).length;
+      const aliveTvs = tvs.filter(t => !t.dead).length;
+      const aliveRhombi = rhombi.filter(r => !r.dead).length;
+      const aliveTotal = aliveOvals + aliveCircles + aliveEggs + aliveTvs + aliveRhombi;
+
+      let text = `Stage: ${stage}`;
+      if (stage === "BREATHING") {
+        text += ` | Breath: ${currentBreath}/${MAX_BREATHS}`;
+        if (breathPhase) text += ` (${breathPhase})`;
+        text += ` | Phase time: ${phaseTime.toFixed(1)}s`;
+      } else if (stage === "GEN") {
+        text += ` | Generating: ${genElapsed.toFixed(1)}/${GEN_DURATION}s`;
+      }
+
+      text += ` | Alive shapes: ${aliveTotal}` +
+              ` (ovals ${aliveOvals}, circles ${aliveCircles}, eggs ${aliveEggs}, tvs ${aliveTvs}, rhombi ${aliveRhombi})`;
+      text += ` | Absorbing: ${absorbingCount}/${absorbQuota}`;
+      text += ` | Total absorbed: ${totalAbsorbed}`;
+      text += ` | Total score: ${totalScore.toFixed(1)}`;
+
+      statusDiv.textContent = text;
+
+      if (stage === "GEN") {
+        const remaining = Math.max(0, GEN_DURATION - genElapsed);
+        genInfoSpan.textContent = `Generation: ${remaining.toFixed(1)}s left`;
+      } else if (stage === "IDLE") {
+        genInfoSpan.textContent = "Generation complete. Click “Start Breathing” to begin.";
+      } else {
+        genInfoSpan.textContent = "";
+      }
+    }
+
+    // ===== Main loop =====
+    function loop(timestamp) {
+      if (lastTime === null) lastTime = timestamp;
+      const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+      lastTime = timestamp;
+      simTime += dt;
+
+      update(dt);
+      draw();
+
+      requestAnimationFrame(loop);
+    }
+
+    // ===== Controls / init =====
+    function resetSimulation() {
+      ovals = [];
+      circles = [];
+      eggs = [];
+      tvs = [];
+      rhombi = [];
+      simTime = 0;
+      lastTime = null;
+
+      stage = "GEN";
+      genElapsed = 0;
+      spawnAccumulator = 0;
+
+      absorbingCount = 0;
+      breathing = false;
+      breathPhase = null;
+      phaseTime = 0;
+      currentBreath = 0;
+
+      totalScore = 0;
+      totalAbsorbed = 0;
+      breathStats = {};
+
+      dirCopyAccumulator = 0;
+      gustAccumulator = 0;
+      lastCreatedShape = null;
+
+      logDiv.innerHTML = "";
+      statusDiv.textContent = "";
+      genInfoSpan.textContent = "Generation starting… 20 seconds of shapes.";
+
+      startButton.disabled = false;
+    }
+
+    function onStartBreathing() {
+      if (stage !== "GEN" && stage !== "IDLE") return;
+
+      const q = parseInt(quotaInput.value, 10);
+      absorbQuota = isNaN(q) ? 90 : Math.max(1, Math.min(400, q));
+
+      stage = "BREATHING";
+      breathing = true;
+      breathPhase = "INHALE";
+      phaseTime = 0;
+      currentBreath = 1;
+      onEnterInhale();
+    }
+
+    function init() {
+      canvas = document.getElementById("simCanvas");
+      ctx = canvas.getContext("2d");
+
+      statusDiv = document.getElementById("status");
+      logDiv = document.getElementById("log");
+      quotaInput = document.getElementById("quotaInput");
+      startButton = document.getElementById("startButton");
+      restartButton = document.getElementById("restartButton");
+      genInfoSpan = document.getElementById("genInfo");
+
+      startButton.addEventListener("click", onStartBreathing);
+      restartButton.addEventListener("click", resetSimulation);
+
+      resetSimulation();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("load", init);
+  </script>
+</body>
+</html>
